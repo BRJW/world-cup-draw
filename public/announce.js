@@ -2,7 +2,7 @@
 // flags-preview page (demo mode). Self-contained: pass in the team, a round
 // label, and an optional coach {name, teamName, image}.
 
-import { flagSVG, flagPalette } from '/flags.js?v=11';
+import { flagSVG, flagPalette } from '/flags.js?v=13';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

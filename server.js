@@ -13,6 +13,7 @@ import {
 import { teamByCode } from './data/teams.js';
 import { fetchAllMatches } from './lib/espn.js';
 import { sendSMS, sendMany, smsEnabled, normalizePhone } from './lib/sms.js';
+import { sendEmail, sendMany as sendEmails, emailEnabled, normalizeEmail, magicLinkEmail } from './lib/email.js';
 import { id as randId } from './lib/ids.js';
 
 const sixDigit = () => String(Math.floor(100000 + Math.random() * 900000));
@@ -44,8 +45,8 @@ const publicPlayer = (p) => p && ({
   id: p.id, name: p.name, isCommissioner: p.isCommissioner,
   teamName: p.teamName || null, image: p.image || null,
 });
-// Self view includes the owner's own phone (never broadcast in pool state).
-const selfPlayer = (p) => p && ({ ...publicPlayer(p), phone: p.phone || null });
+// Self view includes the owner's own contact details (never broadcast).
+const selfPlayer = (p) => p && ({ ...publicPlayer(p), phone: p.phone || null, email: p.email || null });
 
 async function fullState(poolId) {
   const pool = await store.getPool(poolId);
@@ -82,22 +83,26 @@ async function requireCommissioner(token, poolId) {
 }
 
 // ---- routes ----------------------------------------------------------------
-app.get('/api/health', (req, res) => res.json({ ok: true, backend: store.backend, sms: smsEnabled() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, backend: store.backend, sms: smsEnabled(), email: emailEnabled() }));
 
 app.get('/api/teams', (req, res) => res.json({
   teams: TEAMS, maxPlayers: MAX_PLAYERS, roundCount: ROUND_COUNT,
-  teamsPerPlayer: TEAMS_PER_PLAYER, rounds: ROUND_INFO, sms: smsEnabled(),
+  teamsPerPlayer: TEAMS_PER_PLAYER, rounds: ROUND_INFO,
+  sms: smsEnabled(), email: emailEnabled(),
 }));
 
-// Create a pool (creator becomes commissioner)
+// Create a pool (creator becomes commissioner). Email lets them recover access.
 app.post('/api/pools', async (req, res) => {
   const name = (req.body?.name || '').trim();
   const commissionerName = (req.body?.commissionerName || '').trim();
   if (!name || !commissionerName) return res.status(400).json({ error: 'name and commissionerName required' });
+  const email = normalizeEmail(req.body?.email);
+  if (req.body?.email && !email) return res.status(400).json({ error: 'enter a valid email address' });
   const { pool, player } = await store.createPool({ name, commissionerName });
+  if (email) await store.updatePlayer(player.id, { email });
   res.json({
     pool: publicPool(pool),
-    player: { ...publicPlayer(player), token: player.token },
+    player: { ...selfPlayer({ ...player, email }), token: player.token },
   });
 });
 
@@ -113,6 +118,8 @@ app.get('/api/pools/by-code/:code', async (req, res) => {
 app.post('/api/pools/:code/join', async (req, res) => {
   const name = (req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name required' });
+  const email = normalizeEmail(req.body?.email);
+  if (req.body?.email && !email) return res.status(400).json({ error: 'enter a valid email address' });
   const pool = await store.getPoolByCode(req.params.code);
   if (!pool) return res.status(404).json({ error: 'pool not found' });
   if (pool.status !== 'setup') return res.status(409).json({ error: 'draft already started' });
@@ -121,10 +128,11 @@ app.post('/api/pools/:code/join', async (req, res) => {
   if (players.some((p) => p.name.toLowerCase() === name.toLowerCase()))
     return res.status(409).json({ error: 'name already taken in this pool' });
   const player = await store.addPlayer(pool.id, name);
+  if (email) await store.updatePlayer(player.id, { email });
   await broadcast(pool.id);
   res.json({
     pool: publicPool(pool),
-    player: { ...publicPlayer(player), token: player.token },
+    player: { ...selfPlayer({ ...player, email }), token: player.token },
   });
 });
 
@@ -169,9 +177,59 @@ app.post('/api/players/me', async (req, res) => {
       fields.phone = n;
     }
   }
+  if ('email' in req.body) {
+    const em = req.body.email;
+    if (em === null || em === '') fields.email = null;
+    else {
+      const n = normalizeEmail(em);
+      if (!n) return res.status(400).json({ error: 'enter a valid email address' });
+      fields.email = n;
+    }
+  }
   const updated = await store.updatePlayer(player.id, fields);
   await broadcast(player.poolId);
   res.json({ player: selfPlayer(updated || player) });
+});
+
+// ---- email magic-link login / recovery -------------------------------------
+app.post('/api/auth/email/request', async (req, res) => {
+  if (!emailEnabled()) return res.status(503).json({ error: "email login isn't set up yet" });
+  const email = normalizeEmail(req.body?.email);
+  if (!email) return res.status(400).json({ error: 'enter a valid email address' });
+  const players = await store.getPlayersByEmail(email);
+  if (players.length) {
+    const token = randId(20);
+    const code = sixDigit();
+    await store.createLoginRequest({ email, code, token, ttlMs: 30 * 60 * 1000 });
+    const link = `${appUrl(req)}/login?t=${token}`;
+    const poolNames = [];
+    for (const p of players) { const pool = await store.getPool(p.poolId); if (pool) poolNames.push(pool.name); }
+    const { html, text } = magicLinkEmail({ link, code, poolNames: [...new Set(poolNames)] });
+    await sendEmail({ to: email, subject: 'Your World Cup Pool login link', html, text });
+  }
+  res.json({ ok: true }); // generic — don't reveal whether the email is known
+});
+
+app.post('/api/auth/email/verify', async (req, res) => {
+  let lr;
+  if (req.body?.token) {
+    lr = await store.findLoginRequest({ token: req.body.token });
+    if (!lr) return res.status(400).json({ error: 'that link expired — request a new one' });
+  } else {
+    const email = normalizeEmail(req.body?.email);
+    const code = String(req.body?.code || '').replace(/\D/g, '');
+    if (!email || !code) return res.status(400).json({ error: 'enter your email and the code' });
+    lr = await store.findLoginRequest({ email, code });
+    if (!lr) return res.status(400).json({ error: 'wrong or expired code' });
+  }
+  await store.useLoginRequest(lr.token);
+  const players = await store.getPlayersByEmail(lr.email);
+  const memberships = [];
+  for (const p of players) {
+    const pool = await store.getPool(p.poolId);
+    if (pool) memberships.push({ poolId: pool.id, code: pool.joinCode, name: pool.name, token: p.token, playerId: p.id });
+  }
+  res.json({ memberships });
 });
 
 // ---- text-message login / recovery -----------------------------------------
@@ -247,12 +305,16 @@ app.post('/api/pools/:id/start', async (req, res) => {
   }
   await store.updatePool(pool.id, { draftOrder: order, status: 'drafting', potIndex: 0, pickIndex: 0 });
   const state = await broadcast(pool.id, { event: 'draft-started' });
-  // Text everyone with a phone (except the commissioner kicking it off).
-  if (smsEnabled()) {
+  // Email everyone who left an address (except the commissioner kicking it off).
+  if (emailEnabled()) {
     const link = `${appUrl(req)}/p/${pool.joinCode}`;
-    const targets = players.filter((p) => p.phone && p.id !== commissioner.id)
-      .map((p) => ({ to: p.phone, body: `🏆 The draft for “${pool.name}” is starting now! Watch live: ${link}` }));
-    if (targets.length) sendMany(targets).catch(() => {});
+    const targets = players.filter((p) => p.email && p.id !== commissioner.id).map((p) => ({
+      to: p.email,
+      subject: `🏆 The draft for "${pool.name}" is starting`,
+      text: `The draft for "${pool.name}" is starting now! Watch it live: ${link}`,
+      html: `<div style="font-family:system-ui;padding:20px"><h2>🏆 "${pool.name}" — the draft is starting!</h2><p><a href="${link}">Watch it live →</a></p></div>`,
+    }));
+    if (targets.length) sendEmails(targets).catch(() => {});
   }
   res.json(state);
 });

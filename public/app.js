@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=11';
+import { playAnnouncement } from '/announce.js?v=13';
 
 const $app = document.getElementById('app');
 
@@ -15,9 +15,10 @@ const S = {
   joinPool: null,        // {pool} when prompting a non-member to join
   homeMode: 'create',    // 'create' | 'join' (forms screen)
   tab: 'draft',          // draft | teams | standings | scores
-  sms: false,            // is text messaging configured on the server?
-  recoverStep: 'phone',  // 'phone' | 'sent' | 'verifying'
-  recoverPhone: '',
+  sms: false,            // (legacy) text messaging configured?
+  email: false,          // is email (magic-link) configured on the server?
+  recoverStep: 'email',  // 'email' | 'sent' | 'verifying'
+  recoverEmail: '',
   teams: [],
   maxPlayers: 12,
   teamsPerPlayer: 4,
@@ -127,7 +128,7 @@ async function boot() {
     const t = await api('/api/teams');
     S.teams = t.teams; S.maxPlayers = t.maxPlayers;
     S.teamsPerPlayer = t.teamsPerPlayer || 4; S.rounds = t.rounds || [];
-    S.sms = !!t.sms;
+    S.sms = !!t.sms; S.email = !!t.email;
   } catch { /* non-fatal */ }
   route();
 }
@@ -150,17 +151,17 @@ async function route() {
 
 // Tap-link recovery: ?t=<token> -> restore memberships -> dashboard.
 async function loginFromLink(token) {
-  if (!token) { S.view = 'recover'; S.recoverStep = 'phone'; return render(); }
+  if (!token) { S.view = 'recover'; S.recoverStep = 'email'; return render(); }
   S.view = 'recover'; S.recoverStep = 'verifying'; render();
   try {
-    const r = await api('/api/auth/sms/verify', { method: 'POST', body: { token } });
+    const r = await api('/api/auth/email/verify', { method: 'POST', body: { token } });
     storeMemberships(r.memberships);
     history.replaceState({}, '', '/');
     toast(`You're back in — ${r.memberships.length} pool${r.memberships.length === 1 ? '' : 's'} restored`);
     await showDashboard();
   } catch (e) {
     history.replaceState({}, '', '/login');
-    S.error = e.message; S.recoverStep = 'phone'; render();
+    S.error = e.message; S.recoverStep = 'email'; render();
   }
 }
 
@@ -315,7 +316,7 @@ function renderDashboard() {
     </div>
     <h3 class="section-h">Your draws</h3>
     ${cards}
-    ${S.sms ? `<p class="center small" style="margin-top:18px"><a class="link" data-action="go-recover">On a new phone? Get back in by text →</a></p>` : ''}`;
+    ${S.email ? `<p class="center small" style="margin-top:18px"><a class="link" data-action="go-recover">On a new device? Email me a login link →</a></p>` : ''}`;
 }
 
 function renderNotFound() {
@@ -340,18 +341,18 @@ function renderRecover() {
     </div>
     <div class="card">
     ${sent ? `
-      <h2>Check your texts 📲</h2>
-      <p class="sub">We sent a link to <b>${esc(S.recoverPhone)}</b>. Tap it to get straight back into your draws — or enter the 6-digit code here.</p>
-      <label>Code from the text</label>
+      <h2>Check your email 📬</h2>
+      <p class="sub">We sent a magic link to <b>${esc(S.recoverEmail)}</b>. Tap it to get straight back into your draws — or enter the 6-digit code here.</p>
+      <label>Code from the email</label>
       <input type="text" id="rec-code" inputmode="numeric" maxlength="6" placeholder="123456" style="letter-spacing:6px;font-weight:700;text-align:center" />
       <button data-action="recover-verify">Log in →</button>
-      <button class="ghost" data-action="recover-back">Use a different number</button>
+      <button class="ghost" data-action="recover-back">Use a different email</button>
     ` : `
       <h2>Lost access?</h2>
-      <p class="sub">If you saved your phone number in a draw, we'll text you a link to get back into all of them — on any device.</p>
-      <label>Phone number</label>
-      <input type="text" id="rec-phone" inputmode="tel" placeholder="+1 555 123 4567" value="${esc(S.recoverPhone)}" />
-      <button data-action="recover-request">Text me a link →</button>
+      <p class="sub">Enter the email you registered with and we'll send a link to get back into all your draws — on any device.</p>
+      <label>Email address</label>
+      <input type="text" id="rec-email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="${esc(S.recoverEmail)}" />
+      <button data-action="recover-request">Email me a link →</button>
     `}
       <div class="error">${esc(S.error)}</div>
     </div>`;
@@ -370,6 +371,8 @@ function renderJoinPrompt() {
       ${full ? `<button data-action="watch-pool">Watch this draw →</button>` : `
         <label>Your name</label>
         <input type="text" id="jp-name" maxlength="24" placeholder="e.g. Buster" />
+        <label>Email <span class="muted small">— to log back in later</span></label>
+        <input type="text" id="jp-email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
         <button data-action="join-prompt-submit">Join the draw →</button>`}
       <div class="error">${esc(S.error)}</div>
       <button class="ghost" data-action="go-dashboard" style="margin-top:10px">Your other draws</button>
@@ -396,6 +399,8 @@ function renderForms() {
       <input type="text" id="pool-name" placeholder="The Lads' World Cup" maxlength="40" />
       <label>Your name (you'll be commissioner)</label>
       <input type="text" id="commish-name" placeholder="e.g. Buster" maxlength="24" />
+      <label>Email <span class="muted small">— so you can log back in on any device</span></label>
+      <input type="text" id="reg-email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
       <button data-action="create-pool">Create pool →</button>
     ` : `
       <h2>Join a pool</h2>
@@ -404,11 +409,13 @@ function renderForms() {
       <input type="text" id="join-code" placeholder="ABC123" maxlength="6" value="${esc(S.prefillCode)}" style="text-transform:uppercase;letter-spacing:4px;font-weight:700" />
       <label>Your name</label>
       <input type="text" id="join-name" placeholder="e.g. Buster" maxlength="24" />
+      <label>Email <span class="muted small">— so you can log back in on any device</span></label>
+      <input type="text" id="reg-email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
       <button data-action="join-pool">Join →</button>
     `}
     <div class="error">${esc(S.error)}</div>
   </div>
-  ${S.sms ? `<p class="center small"><a class="link" data-action="go-recover">Already in a draw on another phone? Get back in by text →</a></p>` : ''}
+  ${S.email ? `<p class="center small"><a class="link" data-action="go-recover">Already registered, on a new device? Email me a link →</a></p>` : ''}
   <p class="center muted small">Live draw · see your teams · track scores</p>`;
 }
 
@@ -463,11 +470,6 @@ function renderLobby() {
       <span class="small muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(link)}</span>
       <button class="secondary btn-inline" data-action="copy-link">Copy link</button>
     </div>
-    ${S.sms && isCommissioner() ? `
-      <label style="margin-top:16px">Or text the invite</label>
-      <textarea id="invite-phones" rows="2" placeholder="Phone numbers, comma or line separated&#10;+1 555 123 4567, +1 555 987 6543"></textarea>
-      <button class="secondary" data-action="send-invites">📲 Text invites</button>
-    ` : ''}
   </div>
   <div class="card">
     <h2>Players <span class="muted small">(${S.players.length}/${S.maxPlayers})</span></h2>
@@ -609,12 +611,9 @@ function renderClubCard() {
         <input type="text" id="club-name" maxlength="30" placeholder="e.g. Buster's Galácticos" value="${esc(me?.teamName || '')}" />
       </div>
     </div>
-    ${S.sms ? `
-      <label>Phone number ${me?.phone ? '<span class="muted small">(saved ✓)</span>' : '<span class="muted small">(optional)</span>'}</label>
-      <input type="text" id="club-phone" inputmode="tel" placeholder="+1 555 123 4567" value="${esc(me?.phone || '')}" />
-      <p class="muted small" style="margin-top:6px">Lets you log back in by text on a new phone, and get a heads-up when the draft starts.</p>
-    ` : ''}
-    <div class="row">
+    <label>Email ${me?.email ? '<span class="muted small">(saved ✓)</span>' : '<span class="muted small">— to log back in on a new device</span>'}</label>
+    <input type="text" id="club-email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="${esc(me?.email || '')}" />
+    <div class="row" style="margin-top:14px">
       <button class="secondary" data-action="pick-badge">📷 ${preview ? 'Change badge' : 'Upload badge'}</button>
       <button data-action="save-profile">Save</button>
     </div>
@@ -804,10 +803,10 @@ const actions = {
 
   async 'create-pool'() {
     S.error = '';
-    const name = val('pool-name'), commissionerName = val('commish-name');
-    if (!name || !commissionerName) { S.error = 'Fill in both fields.'; return render(); }
+    const name = val('pool-name'), commissionerName = val('commish-name'), email = val('reg-email');
+    if (!name || !commissionerName) { S.error = 'Fill in the pool name and your name.'; return render(); }
     try {
-      const r = await api('/api/pools', { method: 'POST', body: { name, commissionerName } });
+      const r = await api('/api/pools', { method: 'POST', body: { name, commissionerName, email } });
       S.token = r.player.token; S.me = r.player;
       savePool(r.pool.id, { token: r.player.token, playerId: r.player.id, code: r.pool.joinCode, name: r.pool.name });
       navigate(`/p/${r.pool.joinCode}`);
@@ -816,10 +815,10 @@ const actions = {
 
   async 'join-pool'() {
     S.error = '';
-    const code = val('join-code').toUpperCase(), name = val('join-name');
+    const code = val('join-code').toUpperCase(), name = val('join-name'), email = val('reg-email');
     if (!code || !name) { S.error = 'Enter the code and your name.'; return render(); }
     try {
-      const r = await api(`/api/pools/${code}/join`, { method: 'POST', body: { name } });
+      const r = await api(`/api/pools/${code}/join`, { method: 'POST', body: { name, email } });
       S.token = r.player.token; S.me = r.player;
       savePool(r.pool.id, { token: r.player.token, playerId: r.player.id, code: r.pool.joinCode, name: r.pool.name });
       navigate(`/p/${r.pool.joinCode}`);
@@ -828,10 +827,10 @@ const actions = {
 
   async 'join-prompt-submit'() {
     S.error = '';
-    const name = val('jp-name');
+    const name = val('jp-name'), email = val('jp-email');
     if (!name) { S.error = 'Enter your name.'; return render(); }
     try {
-      const r = await api(`/api/pools/${S.joinPool.joinCode}/join`, { method: 'POST', body: { name } });
+      const r = await api(`/api/pools/${S.joinPool.joinCode}/join`, { method: 'POST', body: { name, email } });
       savePool(r.pool.id, { token: r.player.token, playerId: r.player.id, code: r.pool.joinCode, name: r.pool.name });
       navigate(`/p/${r.pool.joinCode}`);
     } catch (e) { S.error = e.message; render(); }
@@ -843,41 +842,30 @@ const actions = {
     await enterPool(S.joinPool.id);
   },
 
-  // ---- text login / recovery ----
-  'go-recover'() { S.error = ''; S.recoverStep = 'phone'; S.recoverPhone = ''; S.view = 'recover'; render(); },
-  'recover-back'() { S.error = ''; S.recoverStep = 'phone'; render(); },
+  // ---- email magic-link login / recovery ----
+  'go-recover'() { S.error = ''; S.recoverStep = 'email'; S.recoverEmail = ''; S.view = 'recover'; render(); },
+  'recover-back'() { S.error = ''; S.recoverStep = 'email'; render(); },
 
   async 'recover-request'() {
     S.error = '';
-    const phone = val('rec-phone');
-    if (!phone) { S.error = 'Enter your phone number.'; return render(); }
+    const email = val('rec-email');
+    if (!email) { S.error = 'Enter your email address.'; return render(); }
     try {
-      await api('/api/auth/sms/request', { method: 'POST', body: { phone } });
-      S.recoverPhone = phone; S.recoverStep = 'sent'; render();
+      await api('/api/auth/email/request', { method: 'POST', body: { email } });
+      S.recoverEmail = email; S.recoverStep = 'sent'; render();
     } catch (e) { S.error = e.message; render(); }
   },
 
   async 'recover-verify'() {
     S.error = '';
     const code = val('rec-code');
-    if (!code) { S.error = 'Enter the code from the text.'; return render(); }
+    if (!code) { S.error = 'Enter the code from the email.'; return render(); }
     try {
-      const r = await api('/api/auth/sms/verify', { method: 'POST', body: { phone: S.recoverPhone, code } });
-      if (!r.memberships.length) { S.error = 'No draws found for that number.'; return render(); }
+      const r = await api('/api/auth/email/verify', { method: 'POST', body: { email: S.recoverEmail, code } });
+      if (!r.memberships.length) { S.error = 'No draws found for that email.'; return render(); }
       storeMemberships(r.memberships);
       toast(`You're back in — ${r.memberships.length} pool${r.memberships.length === 1 ? '' : 's'} restored`);
       navigate('/');
-    } catch (e) { S.error = e.message; render(); }
-  },
-
-  async 'send-invites'() {
-    S.error = '';
-    const phones = val('invite-phones');
-    if (!phones) { S.error = 'Add at least one phone number.'; return render(); }
-    try {
-      const r = await api(`/api/pools/${S.pool.id}/invite`, { method: 'POST', body: { token: S.token, phones } });
-      toast(`Texted ${r.sent} of ${r.total}`);
-      const el = document.getElementById('invite-phones'); if (el) el.value = '';
     } catch (e) { S.error = e.message; render(); }
   },
 
@@ -937,7 +925,7 @@ const actions = {
     S.error = '';
     const body = { token: S.token, teamName: val('club-name') };
     if (S.pendingImage) body.image = S.pendingImage;
-    if (S.sms && document.getElementById('club-phone')) body.phone = val('club-phone');
+    if (document.getElementById('club-email')) body.email = val('club-email');
     try {
       const r = await api('/api/players/me', { method: 'POST', body });
       S.me = { ...S.me, ...r.player };
