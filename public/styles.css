@@ -1,0 +1,184 @@
+:root {
+  --bg: #0b1437;
+  --bg2: #131e4d;
+  --card: #1a2659;
+  --card2: #23337a;
+  --line: #2d3f8f;
+  --txt: #eef2ff;
+  --muted: #9fb0e8;
+  --accent: #00e676;
+  --accent2: #ffd54f;
+  --danger: #ff5470;
+  --radius: 16px;
+  --pot1: #ffd54f;
+  --pot2: #4fc3f7;
+  --pot3: #ba68c8;
+  --pot4: #ff8a65;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: radial-gradient(1200px 600px at 50% -10%, #1b2a6b 0%, var(--bg) 55%) fixed;
+  color: var(--txt);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { max-width: 720px; margin: 0 auto; padding: env(safe-area-inset-top) 16px 96px; }
+.loading { text-align: center; padding: 80px 0; color: var(--muted); }
+
+/* ---- header ---- */
+.app-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 18px 2px 14px; position: sticky; top: 0; z-index: 20;
+  background: linear-gradient(var(--bg) 70%, transparent);
+}
+.app-header h1 { font-size: 19px; margin: 0; letter-spacing: .2px; }
+.app-header .ball { font-size: 26px; }
+.app-header .spacer { flex: 1; }
+.chip {
+  background: var(--card); border: 1px solid var(--line); color: var(--muted);
+  padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+}
+
+/* ---- cards ---- */
+.card {
+  background: linear-gradient(180deg, var(--card) 0%, var(--bg2) 100%);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 18px; margin-bottom: 16px;
+}
+.card h2 { margin: 0 0 4px; font-size: 17px; }
+.card .sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+
+/* ---- forms ---- */
+label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+input[type=text], input[type=number], select {
+  width: 100%; padding: 14px; border-radius: 12px; font-size: 16px;
+  background: #0e1640; border: 1px solid var(--line); color: var(--txt); outline: none;
+}
+input:focus, select:focus { border-color: var(--accent); }
+.row { display: flex; gap: 10px; }
+.row > * { flex: 1; }
+
+button {
+  font: inherit; font-weight: 700; cursor: pointer; border: none;
+  padding: 14px 18px; border-radius: 12px; width: 100%;
+  background: var(--accent); color: #04210f; font-size: 16px; margin-top: 14px;
+  transition: transform .06s ease, opacity .2s;
+}
+button:active { transform: scale(.98); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.secondary { background: var(--card2); color: var(--txt); border: 1px solid var(--line); }
+button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+button.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); padding: 8px; font-size: 13px; width: auto; margin: 0; }
+.btn-inline { width: auto; margin: 0; padding: 10px 14px; font-size: 14px; }
+
+.error { color: var(--danger); font-size: 13px; margin-top: 10px; min-height: 1em; }
+.notice { color: var(--accent); font-size: 13px; margin-top: 10px; }
+
+/* ---- tabs ---- */
+.tabs {
+  display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+  background: rgba(11,20,55,.92); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line); padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+  max-width: 720px; margin: 0 auto;
+}
+.tabs button {
+  flex: 1; background: none; border: none; color: var(--muted); margin: 0;
+  padding: 8px 4px; font-size: 11px; font-weight: 600; border-radius: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.tabs button .ico { font-size: 20px; }
+.tabs button.active { color: var(--accent); background: rgba(0,230,118,.08); }
+
+/* ---- player list / draft ---- */
+.player-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.player-row:last-child { border-bottom: none; }
+.avatar {
+  width: 34px; height: 34px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-weight: 800; font-size: 14px;
+  background: var(--card2); color: var(--txt);
+}
+.player-row .name { font-weight: 700; flex: 1; }
+.player-row .meta { color: var(--muted); font-size: 12px; }
+.badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
+.badge.you { background: rgba(0,230,118,.15); color: var(--accent); }
+.badge.host { background: rgba(255,213,79,.15); color: var(--accent2); }
+.badge.turn { background: var(--accent); color: #04210f; }
+
+/* ---- pot pills ---- */
+.pot-pill { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; color: #0b1437; }
+.pot-1 { background: var(--pot1); } .pot-2 { background: var(--pot2); }
+.pot-3 { background: var(--pot3); } .pot-4 { background: var(--pot4); }
+
+/* ---- team chips ---- */
+.team {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  background: #0e1640; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px;
+}
+.team .flag { font-size: 22px; }
+.team .tname { font-weight: 700; flex: 1; }
+.team .rec { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ---- live draw stage ---- */
+.stage {
+  text-align: center; padding: 22px 16px; border-radius: var(--radius);
+  background: radial-gradient(400px 200px at 50% 0%, #25357f, var(--card));
+  border: 1px solid var(--line); margin-bottom: 16px;
+}
+.stage .turnline { color: var(--muted); font-size: 13px; }
+.stage .turnname { font-size: 22px; font-weight: 800; margin: 4px 0 14px; }
+.reveal {
+  font-size: 56px; line-height: 1; min-height: 64px;
+  transition: transform .25s; transform: scale(1);
+}
+.reveal.pop { animation: pop .5s ease; }
+@keyframes pop { 0% { transform: scale(.3); opacity: 0; } 60% { transform: scale(1.25); } 100% { transform: scale(1); opacity: 1; } }
+.reveal-name { font-size: 20px; font-weight: 800; margin-top: 8px; min-height: 24px; }
+
+.progress { height: 8px; background: #0e1640; border-radius: 999px; overflow: hidden; margin: 14px 0 4px; }
+.progress > div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .4s; }
+
+/* ---- pot board ---- */
+.pot-board { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px; }
+.pot-col h4 { margin: 0 0 6px; font-size: 12px; color: var(--muted); }
+.mini-team { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 0; }
+.mini-team.taken { opacity: .32; text-decoration: line-through; }
+
+/* ---- leaderboard ---- */
+.lb-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.lb-row:last-child { border-bottom: none; }
+.lb-rank { width: 26px; font-weight: 800; color: var(--muted); text-align: center; }
+.lb-row.top1 .lb-rank { color: var(--accent2); }
+.lb-name { flex: 1; font-weight: 700; }
+.lb-teams { color: var(--muted); font-size: 18px; letter-spacing: 1px; }
+.lb-pts { font-weight: 800; font-size: 18px; font-variant-numeric: tabular-nums; }
+.lb-sub { color: var(--muted); font-size: 12px; }
+
+/* ---- misc ---- */
+.share-box {
+  display: flex; gap: 8px; align-items: center; background: #0e1640;
+  border: 1px dashed var(--line); border-radius: 12px; padding: 12px; margin-top: 10px;
+}
+.share-box .code { font-size: 26px; font-weight: 800; letter-spacing: 4px; color: var(--accent2); flex: 1; }
+.empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+.center { text-align: center; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.divider { height: 1px; background: var(--line); margin: 16px 0; }
+.match-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.match-row .t { flex: 1; }
+.match-row .sc { font-weight: 800; font-variant-numeric: tabular-nums; }
+.match-row.a-right .t.right { text-align: right; }
+.toast {
+  position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%);
+  background: var(--card2); border: 1px solid var(--line); color: var(--txt);
+  padding: 12px 18px; border-radius: 12px; z-index: 50; font-size: 14px; font-weight: 600;
+  box-shadow: 0 8px 30px rgba(0,0,0,.4); animation: rise .3s ease;
+}
+@keyframes rise { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
