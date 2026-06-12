@@ -305,6 +305,29 @@ app.post('/api/sync', async (req, res) => {
 
 app.get('/api/sync/status', (req, res) => res.json({ lastSync }));
 
+// ---- scheduled jobs (driven by the cron service) --------------------------
+// Registry of named jobs the cron service can trigger. Add new scheduled tasks
+// here, then point a cron service at them via CRON_JOBS + a cronSchedule.
+const JOBS = {
+  sync: () => syncSchedule(),
+};
+
+app.post('/api/cron/:job', async (req, res) => {
+  const key = req.get('x-cron-key');
+  if (!process.env.CRON_SECRET || key !== process.env.CRON_SECRET) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const job = JOBS[req.params.job];
+  if (!job) return res.status(404).json({ error: `unknown job: ${req.params.job}` });
+  try {
+    const result = await job();
+    res.json({ job: req.params.job, ok: true, ...result });
+  } catch (e) {
+    console.error(`[cron] job ${req.params.job} failed:`, e.message);
+    res.status(500).json({ job: req.params.job, ok: false, error: e.message });
+  }
+});
+
 // ---- socket.io -------------------------------------------------------------
 io.on('connection', (socket) => {
   socket.on('join-pool', async (poolId) => {
@@ -321,8 +344,11 @@ app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 
 server.listen(PORT, () => {
   console.log(`World Cup Draw listening on :${PORT}`);
-  // Initial schedule/score sync (seed from snapshot if ESPN is unreachable),
-  // then refresh hourly. Errors are logged, never fatal.
+  // Always sync once on boot (seed from snapshot if ESPN is unreachable).
   syncSchedule({ seedIfEmpty: true }).catch((e) => console.error('[sync] boot:', e.message));
-  setInterval(() => syncSchedule().catch((e) => console.error('[sync] hourly:', e.message)), 60 * 60 * 1000);
+  // Self-heal backstop: keep an in-process hourly sync unless an external cron
+  // service owns scheduling (set SELF_SYNC=off on the web service then).
+  if (process.env.SELF_SYNC !== 'off') {
+    setInterval(() => syncSchedule().catch((e) => console.error('[sync] hourly:', e.message)), 60 * 60 * 1000);
+  }
 });
