@@ -371,7 +371,7 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
   font-size: clamp(32px, 9.5vw, 58px); font-weight: 800; text-transform: uppercase;
   letter-spacing: -0.01em; line-height: 1.04; margin-top: 16px;
   /* reserve space for up to two lines so filling text never shifts the layout */
-  min-height: 2.1em; display: flex; align-items: center; justify-content: center;
+  min-height: 2.1em; display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
   text-align: center; padding: 0 8px;
 }
 .announce-name .ltr {
