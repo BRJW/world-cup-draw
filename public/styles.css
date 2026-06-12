@@ -170,6 +170,7 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .badge.you { background: rgba(95,177,232,.16); color: var(--cool); }
 .badge.host { background: rgba(233,196,106,.16); color: var(--accent); }
 .badge.turn { background: var(--accent); color: var(--accent-ink); }
+.badge.open { background: rgba(152,161,189,.16); color: var(--muted); border: 1px dashed var(--line); }
 
 /* ---- pot pills ---- */
 .pot-pill { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; color: #0a0e1a; }

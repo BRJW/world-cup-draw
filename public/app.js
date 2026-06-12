@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=15';
+import { playAnnouncement } from '/announce.js?v=16';
 
 const $app = document.getElementById('app');
 
@@ -182,7 +182,9 @@ async function openPool(code) {
     }
     await enterPool(poolId);
   } else {
-    S.joinPool = byCode.pool; S.view = 'joinPrompt'; render();
+    S.joinPool = byCode.pool;
+    S.claimables = byCode.placeholders || [];
+    S.view = 'joinPrompt'; render();
   }
 }
 
@@ -360,21 +362,32 @@ function renderRecover() {
 
 function renderJoinPrompt() {
   const p = S.joinPool;
-  const full = p.status !== 'setup';
+  const started = p.status !== 'setup';
+  const seats = S.claimables || [];
+  const claimCard = seats.length ? `
+    <div class="card">
+      <h2>Is one of these you?</h2>
+      <p class="sub">The commissioner saved you a seat${started ? ' — your teams are already drawn' : ''}. Tap your name to take it over.</p>
+      <label>Email <span class="muted small">— optional, to log back in later</span></label>
+      <input type="text" id="jp-email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
+      ${seats.map((s) => `<button class="secondary" data-action="claim-seat" data-id="${s.id}">That's me — ${esc(s.name)} →</button>`).join('')}
+      <div class="error">${esc(S.error)}</div>
+    </div>` : '';
   return `<div class="app-header">
       <button class="back-btn" data-action="go-dashboard">‹</button>
       <h1>${esc(p.name)}</h1>
     </div>
+    ${claimCard}
     <div class="card">
-      <h2>${full ? 'This draw has already started' : "You're invited!"}</h2>
-      <p class="sub">${full ? 'You can still watch, but joining is closed.' : `Join <b>${esc(p.name)}</b> and get your four teams in the live draw.`}</p>
-      ${full ? `<button data-action="watch-pool">Watch this draw →</button>` : `
+      <h2>${started ? 'This draw has already started' : (seats.length ? 'Not on the list?' : "You're invited!")}</h2>
+      <p class="sub">${started ? (seats.length ? 'You can also watch without claiming a seat.' : 'You can still watch, but joining is closed.') : `Join <b>${esc(p.name)}</b> and get your four teams in the live draw.`}</p>
+      ${started ? `<button ${seats.length ? 'class="secondary"' : ''} data-action="watch-pool">Watch this draw →</button>` : `
         <label>Your name</label>
         <input type="text" id="jp-name" maxlength="24" placeholder="e.g. Buster" />
-        <label>Email <span class="muted small">— to log back in later</span></label>
-        <input type="text" id="jp-email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
+        ${seats.length ? '' : `<label>Email <span class="muted small">— to log back in later</span></label>
+        <input type="text" id="jp-email" inputmode="email" autocomplete="email" placeholder="you@example.com" />`}
         <button data-action="join-prompt-submit">Join the draw →</button>`}
-      <div class="error">${esc(S.error)}</div>
+      ${seats.length ? '' : `<div class="error">${esc(S.error)}</div>`}
       <button class="ghost" data-action="go-dashboard" style="margin-top:10px">Your other draws</button>
     </div>`;
 }
@@ -475,6 +488,14 @@ function renderLobby() {
   <div class="card">
     <h2>Players <span class="muted small">(${S.players.length}/${S.maxPlayers})</span></h2>
     <div>${S.players.map(playerRow).join('')}</div>
+    ${isCommissioner() && S.players.length < S.maxPlayers ? `
+      <label style="margin-top:14px">Hold a seat for someone</label>
+      <div class="row">
+        <input type="text" id="ph-name" maxlength="24" placeholder="e.g. Dave" />
+        <button class="secondary btn-inline" data-action="add-placeholder" style="flex:0 0 auto">＋ Add</button>
+      </div>
+      <p class="muted small" style="margin-top:6px">You'll draw on their behalf; they can claim the seat from the invite link any time — even after the draft.</p>
+    ` : ''}
   </div>
   <div class="card">
     ${isCommissioner() ? `
@@ -505,6 +526,7 @@ function playerRow(pl) {
     ${avatar(pl)}
     <div class="name">${esc(pl.name)}${pl.teamName ? `<div class="club-sub">${esc(pl.teamName)}</div>` : ''}</div>
     ${pl.isCommissioner ? '<span class="badge host">Commish</span>' : ''}
+    ${pl.placeholder ? '<span class="badge open">Open seat</span>' : ''}
     ${isMe ? '<span class="badge you">You</span>' : ''}
     ${isTurn ? '<span class="badge turn">Picking</span>' : ''}
   </div>`;
@@ -844,6 +866,28 @@ const actions = {
     // open as a spectator (no token) — view-only
     S.token = null; S.me = null;
     await enterPool(S.joinPool.id);
+  },
+
+  async 'add-placeholder'() {
+    S.error = '';
+    const name = val('ph-name');
+    if (!name) { S.error = 'Enter a name for the seat.'; return render(); }
+    try {
+      await api(`/api/pools/${S.pool.id}/placeholders`, { method: 'POST', body: { token: S.token, name } });
+      toast(`Seat held for ${name}`);
+    } catch (e) { S.error = e.message; render(); }
+  },
+
+  async 'claim-seat'(el) {
+    S.error = '';
+    try {
+      const r = await api(`/api/pools/${S.joinPool.joinCode}/claim`, {
+        method: 'POST', body: { playerId: el.dataset.id, email: val('jp-email') },
+      });
+      savePool(r.pool.id, { token: r.player.token, playerId: r.player.id, code: r.pool.joinCode, name: r.pool.name });
+      toast(`Welcome, ${r.player.name} — this seat is yours`);
+      navigate(`/p/${r.pool.joinCode}`);
+    } catch (e) { S.error = e.message; render(); }
   },
 
   // ---- email magic-link login / recovery ----

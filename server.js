@@ -43,6 +43,7 @@ const publicPool = (p) => p && ({
 });
 const publicPlayer = (p) => p && ({
   id: p.id, name: p.name, isCommissioner: p.isCommissioner,
+  placeholder: !!p.placeholder,
   teamName: p.teamName || null, image: p.image || null,
 });
 // Self view includes the owner's own contact details (never broadcast).
@@ -111,7 +112,12 @@ app.get('/api/pools/by-code/:code', async (req, res) => {
   const pool = await store.getPoolByCode(req.params.code);
   if (!pool) return res.status(404).json({ error: 'not found' });
   const players = await store.getPlayers(pool.id);
-  res.json({ pool: publicPool(pool), playerCount: players.length });
+  res.json({
+    pool: publicPool(pool),
+    playerCount: players.length,
+    // open seats someone arriving via the invite link can claim
+    placeholders: players.filter((p) => p.placeholder).map((p) => ({ id: p.id, name: p.name })),
+  });
 });
 
 // Join a pool
@@ -133,6 +139,45 @@ app.post('/api/pools/:code/join', async (req, res) => {
   res.json({
     pool: publicPool(pool),
     player: { ...selfPlayer({ ...player, email }), token: player.token },
+  });
+});
+
+// Commissioner adds a named placeholder to hold a slot (lobby only). The
+// commissioner draws on their behalf; the real person claims the name later.
+app.post('/api/pools/:id/placeholders', async (req, res) => {
+  const commissioner = await requireCommissioner(req.body?.token, req.params.id);
+  if (!commissioner) return res.status(403).json({ error: 'commissioner only' });
+  const pool = await store.getPool(req.params.id);
+  if (pool.status !== 'setup') return res.status(409).json({ error: 'draft already started' });
+  const name = (req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const players = await store.getPlayers(pool.id);
+  if (players.length >= MAX_PLAYERS) return res.status(409).json({ error: `pool full (max ${MAX_PLAYERS})` });
+  if (players.some((p) => p.name.toLowerCase() === name.toLowerCase()))
+    return res.status(409).json({ error: 'name already taken in this pool' });
+  await store.addPlayer(pool.id, name, false, true);
+  await broadcast(pool.id);
+  res.json(await fullState(pool.id));
+});
+
+// Claim a placeholder seat by name — works at ANY stage (even after the draft),
+// so latecomers can take over the teams drawn for them.
+app.post('/api/pools/:code/claim', async (req, res) => {
+  const pool = await store.getPoolByCode(req.params.code);
+  if (!pool) return res.status(404).json({ error: 'pool not found' });
+  const playerId = req.body?.playerId;
+  const players = await store.getPlayers(pool.id);
+  const seat = players.find((p) => p.id === playerId && p.placeholder);
+  if (!seat) return res.status(409).json({ error: 'that seat has already been claimed' });
+  const email = normalizeEmail(req.body?.email);
+  if (req.body?.email && !email) return res.status(400).json({ error: 'enter a valid email address' });
+  const fields = { placeholder: false };
+  if (email) fields.email = email;
+  const claimed = await store.updatePlayer(seat.id, fields);
+  await broadcast(pool.id);
+  res.json({
+    pool: publicPool(pool),
+    player: { ...selfPlayer(claimed), token: claimed.token },
   });
 });
 
