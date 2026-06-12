@@ -500,32 +500,91 @@ function matchRow(m) {
 }
 
 // ---------------------------------------------------------------------------
-// Live reveal animation
+// Full-screen themed country announcement
 // ---------------------------------------------------------------------------
-function animateReveal(pick) {
-  render(); // ensure stage exists with new state
-  const reveal = document.getElementById('reveal');
-  const nameEl = document.getElementById('reveal-name');
-  const team = pick.team || teamByCode(pick.teamCode);
-  if (!reveal || !team) { render(); return; }
-  S.animating = true;
-  const btn = document.getElementById('draw-btn');
-  if (btn) btn.disabled = true;
+// Pick a readable text colour for a given hex background.
+function readableOn(hex) {
+  const h = (hex || '').replace('#', '');
+  if (h.length < 6) return '#ffffff';
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return lum > 0.6 ? '#0b1437' : '#ffffff';
+}
 
+let announceTimer = null;
+function animateReveal(pick) {
+  const team = pick.team || teamByCode(pick.teamCode);
+  render(); // refresh board/state underneath
+  if (!team) { S.animating = false; return; }
+  S.animating = true;
+
+  // tear down any previous overlay
+  document.getElementById('announce')?.remove();
+  clearTimeout(announceTimer);
+
+  const drafter = playerName(pick.playerId);
+  const ri = S.rounds[(pick.round || 1) - 1];
+  const txt = readableOn(team.color);
   const spinPool = S.teams.filter((t) => t.tier === team.tier);
+
+  const el = document.createElement('div');
+  el.id = 'announce';
+  el.className = 'announce';
+  el.style.setProperty('--c1', team.color || '#1a2659');
+  el.style.setProperty('--c2', team.alt || '#0b1437');
+  el.style.setProperty('--txt', txt);
+  el.innerHTML = `
+    <div class="announce-bg"></div>
+    <div class="announce-inner">
+      <div class="announce-round">${esc(ri ? ri.label : 'Pick')} · Tier ${team.tier}</div>
+      <div class="announce-crest"><img id="announce-img" alt="" /></div>
+      <div class="announce-flag" id="announce-flag">🎲</div>
+      <div class="announce-name" id="announce-name">Drawing…</div>
+      <div class="announce-odds" id="announce-odds"></div>
+      <div class="announce-to" id="announce-to"></div>
+      <div class="announce-skip">tap to skip</div>
+    </div>`;
+  el.addEventListener('click', finishAnnounce);
+  document.body.appendChild(el);
+
+  const flagEl = el.querySelector('#announce-flag');
+  const nameEl = el.querySelector('#announce-name');
+
+  // brief drumroll: spin flags from the same tier, then slam to the country
   let ticks = 0;
   const spin = setInterval(() => {
     const r = spinPool[Math.floor(Math.random() * spinPool.length)];
-    reveal.textContent = r.flag;
-    if (nameEl) nameEl.textContent = '…';
-    if (++ticks > 11) {
+    flagEl.textContent = r.flag;
+    if (++ticks > 9) {
       clearInterval(spin);
-      reveal.textContent = team.flag;
-      reveal.classList.add('pop');
-      if (nameEl) nameEl.textContent = `${team.name} → ${playerName(pick.playerId)}`;
-      setTimeout(() => { S.animating = false; render(); }, 1400);
+      revealTeam(el, team, drafter);
     }
-  }, 70);
+  }, 65);
+
+  function revealTeam(root, t, who) {
+    root.classList.add('revealed');
+    flagEl.textContent = t.flag;
+    flagEl.classList.add('pop');
+    nameEl.textContent = t.name;
+    root.querySelector('#announce-odds').textContent = `${t.odds} to win`;
+    root.querySelector('#announce-to').innerHTML = `drafted by <b>${esc(who)}</b>`;
+    const img = root.querySelector('#announce-img');
+    img.onload = () => img.classList.add('show');
+    img.onerror = () => { img.style.display = 'none'; flagEl.classList.add('big'); };
+    img.src = t.crest || '';
+    announceTimer = setTimeout(finishAnnounce, 2400);
+  }
+}
+
+function finishAnnounce() {
+  clearTimeout(announceTimer);
+  const el = document.getElementById('announce');
+  if (el) {
+    el.classList.add('out');
+    setTimeout(() => { el.remove(); S.animating = false; render(); }, 350);
+  } else {
+    S.animating = false; render();
+  }
 }
 
 // ---------------------------------------------------------------------------

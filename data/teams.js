@@ -70,6 +70,66 @@ export const TEAMS = [
   { code: 'HAI', name: 'Haiti',         flag: '🇭🇹', tier: 8, odds: '2500/1' },
 ];
 
+// Team colours (primary, secondary) + crest, for the draw announcements.
+// Colours sourced from ESPN; crest images are ESPN's country logos.
+const THEME = {
+  ESP: ["#c60b1e", "#f1ff91"],
+  FRA: ["#0c2fff", "#ffffff"],
+  ENG: ["#ffffff", "#EA1F29"],
+  POR: ["#da291c", "#d7e9f6"],
+  ARG: ["#74acdf", "#173e69"],
+  BRA: ["#fee000", "#009c37"],
+  GER: ["#000000", "#db41a9"],
+  NED: ["#fb5d00", "#010080"],
+  BEL: ["#ef3340", "#d7e9f6"],
+  NOR: ["#ef2b2d", "#002868"],
+  COL: ["#fbd632", "#21418c"],
+  MAR: ["#009060", "#df2027"],
+  JPN: ["#ed1c24", "#ffffff"],
+  USA: ["#213065", "#d42339"],
+  MEX: ["#006847", "#ffffff"],
+  SEN: ["#00853f", "#fdef42"],
+  SUI: ["#d72b2c", "#ffffff"],
+  TUR: ["#ffffff", "#ef3340"],
+  URU: ["#003da5", "#ffffff"],
+  CRO: ["#ff0000", "#0c2fff"],
+  ECU: ["#ffdd00", "#034ea2"],
+  SWE: ["#fecb00", "#006aa7"],
+  AUT: ["#d72b2c", "#ffffff"],
+  CAN: ["#ed2224", "#ffffff"],
+  CIV: ["#d48c00", "#5bbd19"],
+  ALG: ["#5bbd19", "#000000"],
+  BIH: ["#112855", "#ffffff"],
+  CZE: ["#d7141a", "#ffffff"],
+  EGY: ["#D20300", "#000000"],
+  KOR: ["#ce2028", "#1e4384"],
+  PAR: ["#ea2300", "#0c2fff"],
+  SCO: ["#1a2d69", "#dcf5f7"],
+  AUS: ["#2a2d7c", "#ed2f31"],
+  GHA: ["#ce2931", "#fbd632"],
+  IRN: ["#da0000", "#239f40"],
+  TUN: ["#D20300", "#000000"],
+  COD: ["#418fde", "#C60000"],
+  CPV: ["#0000ff", "#EF3340"],
+  IRQ: ["#00843d", "#CE1126"],
+  JOR: ["#E70000", "#000000"],
+  NZL: ["#273476", "#ffffff"],
+  PAN: ["#d21034", "#005293"],
+  QAT: ["#691a40", "#691a40"],
+  KSA: ["#dddddd", "#006233"],
+  RSA: ["#087d5a", "#fbb516"],
+  UZB: ["#0081d6", "#1EB53A"],
+  CUW: ["#0537e4", "#000000"],
+  HAI: ["#0033a0", "#D20300"],
+};
+
+for (const t of TEAMS) {
+  const [color, alt] = THEME[t.code] || ['#1a2659', '#ffffff'];
+  t.color = color;
+  t.alt = alt;
+  t.crest = `https://a.espncdn.com/i/teamlogos/countries/500/${t.code.toLowerCase()}.png`;
+}
+
 export const TIERS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 export function teamByCode(code) {
