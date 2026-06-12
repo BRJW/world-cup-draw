@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=9';
+import { playAnnouncement } from '/announce.js?v=10';
 
 const $app = document.getElementById('app');
 
@@ -9,8 +9,11 @@ const $app = document.getElementById('app');
 // State
 // ---------------------------------------------------------------------------
 const S = {
-  screen: 'home',        // 'home' | 'pool'
-  homeMode: 'create',    // 'create' | 'join'
+  view: 'dashboard',     // 'dashboard' | 'forms' | 'pool' | 'joinPrompt' | 'notfound'
+  myPools: null,         // dashboard summaries (null = loading)
+  poolCode: null,        // code in the URL for the current pool
+  joinPool: null,        // {pool} when prompting a non-member to join
+  homeMode: 'create',    // 'create' | 'join' (forms screen)
   tab: 'draft',          // draft | teams | standings | scores
   teams: [],
   maxPlayers: 12,
@@ -36,10 +39,28 @@ const S = {
   animating: false,
 };
 
-const LS_KEY = 'wcd:identity';
-const saveIdentity = (token, poolId) => localStorage.setItem(LS_KEY, JSON.stringify({ token, poolId }));
-const loadIdentity = () => { try { return JSON.parse(localStorage.getItem(LS_KEY)); } catch { return null; } };
-const clearIdentity = () => localStorage.removeItem(LS_KEY);
+// Membership store: { [poolId]: { token, playerId, code, name } } — one entry
+// per pool you're in. Migrates the old single-pool identity if present.
+const LS_KEY = 'wcd:pools';
+function loadPools() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch { return {}; } }
+function savePool(poolId, data) {
+  const m = loadPools(); m[poolId] = { ...m[poolId], ...data };
+  try { localStorage.setItem(LS_KEY, JSON.stringify(m)); } catch { /* private mode */ }
+}
+function removePoolLocal(poolId) {
+  const m = loadPools(); delete m[poolId];
+  try { localStorage.setItem(LS_KEY, JSON.stringify(m)); } catch { /* ignore */ }
+}
+(function migrate() {
+  try {
+    const old = localStorage.getItem('wcd:identity');
+    if (old) {
+      const { token, poolId } = JSON.parse(old);
+      if (token && poolId) savePool(poolId, { token });
+      localStorage.removeItem('wcd:identity');
+    }
+  } catch { /* ignore */ }
+})();
 
 // ---------------------------------------------------------------------------
 // API
@@ -51,7 +72,7 @@ async function api(path, opts = {}) {
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `request failed (${res.status})`);
+  if (!res.ok) { const e = new Error(data.error || `request failed (${res.status})`); e.status = res.status; throw e; }
   return data;
 }
 
@@ -87,39 +108,96 @@ function applyState(state) {
 }
 
 // ---------------------------------------------------------------------------
-// Boot
+// Routing  ( /  = dashboard,  /p/<CODE> = a pool )
 // ---------------------------------------------------------------------------
-async function boot() {
-  const params = new URLSearchParams(location.search);
-  const joinCode = params.get('join');
-  if (joinCode) { S.homeMode = 'join'; S.prefillCode = joinCode.toUpperCase(); }
+function navigate(path, replace = false) {
+  if (location.pathname + location.search !== path) {
+    history[replace ? 'replaceState' : 'pushState']({}, '', path);
+  }
+  route();
+}
+window.addEventListener('popstate', () => route());
 
+async function boot() {
   try {
     const t = await api('/api/teams');
     S.teams = t.teams; S.maxPlayers = t.maxPlayers;
     S.teamsPerPlayer = t.teamsPerPlayer || 4; S.rounds = t.rounds || [];
   } catch { /* non-fatal */ }
+  route();
+}
 
-  const ident = loadIdentity();
-  if (ident?.token && ident?.poolId) {
-    try {
-      const me = await api(`/api/me?token=${ident.token}`);
-      S.token = ident.token;
-      S.me = me.player;
-      await enterPool(me.poolId);
-      return;
-    } catch { clearIdentity(); }
+async function route() {
+  const path = location.pathname;
+  const params = new URLSearchParams(location.search);
+  // legacy share links: /?join=CODE  ->  /p/CODE
+  const legacy = params.get('join');
+  const m = path.match(/^\/p\/([A-Za-z0-9]{4,8})\/?$/);
+  if (legacy && !m) { navigate(`/p/${legacy.toUpperCase()}`, true); return; }
+  if (m) { await openPool(m[1].toUpperCase()); return; }
+  await showDashboard();
+}
+
+async function openPool(code) {
+  S.poolCode = code; S.error = '';
+  let byCode;
+  try { byCode = await api(`/api/pools/by-code/${code}`); }
+  catch { S.view = 'notfound'; return render(); }
+
+  const poolId = byCode.pool.id;
+  const membership = loadPools()[poolId];
+  if (membership?.token) {
+    S.token = membership.token;
+    S.me = membership.playerId ? { id: membership.playerId } : null;
+    if (!S.me) {
+      try { S.me = (await api(`/api/me?token=${membership.token}`)).player; savePool(poolId, { playerId: S.me.id }); }
+      catch { /* token stale; fall through as member anyway */ }
+    }
+    await enterPool(poolId);
+  } else {
+    S.joinPool = byCode.pool; S.view = 'joinPrompt'; render();
   }
-  render();
 }
 
 async function enterPool(poolId) {
+  S.tab = 'draft';
   const state = await api(`/api/pools/${poolId}`);
   applyState(state);
-  S.screen = 'pool';
+  savePool(poolId, { code: state.pool.joinCode, name: state.pool.name });
+  S.view = 'pool';
   joinRoom(poolId);
   await refreshAux();
   render();
+}
+
+async function showDashboard() {
+  S.view = 'dashboard';
+  const entries = Object.entries(loadPools());
+  if (S.myPools === null) render(); // skeleton on first paint
+  const summaries = await Promise.all(entries.map(([poolId, m]) => summarizePool(poolId, m)));
+  S.myPools = summaries.filter(Boolean).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  render();
+}
+
+async function summarizePool(poolId, m) {
+  try {
+    const state = await api(`/api/pools/${poolId}`);
+    let playerId = m.playerId;
+    if (!playerId && m.token) {
+      try { playerId = (await api(`/api/me?token=${m.token}`)).player.id; savePool(poolId, { playerId }); } catch { /* ignore */ }
+    }
+    savePool(poolId, { code: state.pool.joinCode, name: state.pool.name });
+    const meP = state.players.find((p) => p.id === playerId) || null;
+    const myTeams = state.picks.filter((p) => p.playerId === playerId)
+      .map((p) => p.team || teamByCode(p.teamCode)).sort((a, b) => (a?.tier || 0) - (b?.tier || 0));
+    return {
+      poolId, code: state.pool.joinCode, name: state.pool.name, status: state.pool.status,
+      createdAt: state.pool.createdAt, players: state.players.length, me: meP, myTeams,
+    };
+  } catch (e) {
+    if (e.status === 404) { removePoolLocal(poolId); return null; } // pool gone
+    return { poolId, code: m.code, name: m.name || 'A draw', status: '?', stale: true, players: 0, myTeams: [] };
+  }
 }
 
 async function refreshAux() {
@@ -158,13 +236,94 @@ function toast(msg) {
 // ---------------------------------------------------------------------------
 function render() {
   if (S.animating) return; // don't clobber a running reveal
-  $app.innerHTML = S.screen === 'home' ? renderHome() : renderPool();
+  let html;
+  if (S.view === 'pool') html = renderPool();
+  else if (S.view === 'joinPrompt') html = renderJoinPrompt();
+  else if (S.view === 'forms') html = renderForms();
+  else if (S.view === 'notfound') html = renderNotFound();
+  else html = renderDashboard();
+  $app.innerHTML = html;
 }
 
-function renderHome() {
+function poolUrl(code) { return `${location.origin}/p/${code}`; }
+
+function renderDashboard() {
+  const pools = S.myPools;
+  const header = `<div class="app-header"><span class="ball">⚽</span><h1>World Cup Draw</h1></div>`;
+  if (pools === null) {
+    return header + `<div class="card"><div class="empty">Loading your draws…</div></div>`;
+  }
+  if (pools.length === 0) {
+    // first run — go straight to the create/join forms
+    return renderForms();
+  }
+  const cards = pools.map((p) => {
+    const statusChip = { setup: 'Lobby', drafting: 'Live draft', done: 'Drafted', '?': 'Offline' }[p.status] || p.status;
+    const flags = p.myTeams && p.myTeams.length ? p.myTeams.map((t) => t?.flag || '⚽').join(' ') : '';
+    const sub = p.me
+      ? (p.me.teamName ? esc(p.me.teamName) : `as ${esc(p.me.name)}`)
+      : 'tap to open';
+    return `<div class="card pool-card" data-action="open-pool" data-code="${p.code}">
+      <button class="pool-x" data-action="remove-pool" data-id="${p.poolId}" title="Remove from list">✕</button>
+      <div class="pool-card-top">
+        <div style="flex:1;min-width:0">
+          <div class="pool-card-name">${esc(p.name)}</div>
+          <div class="club-sub">${sub}${p.me?.isCommissioner ? ' · Commish' : ''}</div>
+        </div>
+        <span class="chip">${statusChip}</span>
+      </div>
+      <div class="pool-card-bottom">
+        <span class="muted small">${p.players} player${p.players === 1 ? '' : 's'}</span>
+        <span class="pool-flags">${flags}</span>
+      </div>
+    </div>`;
+  }).join('');
+  return `${header}
+    <div class="dash-actions">
+      <button data-action="go-create">➕ New draw</button>
+      <button class="secondary" data-action="go-join">Join with code</button>
+    </div>
+    <h3 class="section-h">Your draws</h3>
+    ${cards}`;
+}
+
+function renderNotFound() {
+  return `<div class="app-header"><span class="ball">⚽</span><h1>World Cup Draw</h1></div>
+    <div class="card center">
+      <div style="font-size:40px">🤔</div>
+      <h2>Draw not found</h2>
+      <p class="sub" style="text-align:center">That code doesn't match a draw. Check the link, or head back.</p>
+      <button data-action="go-dashboard">← Your draws</button>
+    </div>`;
+}
+
+function renderJoinPrompt() {
+  const p = S.joinPool;
+  const full = p.status !== 'setup';
+  return `<div class="app-header">
+      <button class="back-btn" data-action="go-dashboard">‹</button>
+      <h1>${esc(p.name)}</h1>
+    </div>
+    <div class="card">
+      <h2>${full ? 'This draw has already started' : "You're invited!"}</h2>
+      <p class="sub">${full ? 'You can still watch, but joining is closed.' : `Join <b>${esc(p.name)}</b> and get your four teams in the live draw.`}</p>
+      ${full ? `<button data-action="watch-pool">Watch this draw →</button>` : `
+        <label>Your name</label>
+        <input type="text" id="jp-name" maxlength="24" placeholder="e.g. Buster" />
+        <button data-action="join-prompt-submit">Join the draw →</button>`}
+      <div class="error">${esc(S.error)}</div>
+      <button class="ghost" data-action="go-dashboard" style="margin-top:10px">Your other draws</button>
+    </div>`;
+}
+
+function renderForms() {
   const create = S.homeMode === 'create';
+  const hasPools = (S.myPools && S.myPools.length) || Object.keys(loadPools()).length;
   return `
-  <div class="app-header"><span class="ball">⚽</span><h1>World Cup Draw 2026</h1></div>
+  <div class="app-header">
+    ${hasPools ? '<button class="back-btn" data-action="go-dashboard">‹</button>' : '<span class="ball">⚽</span>'}
+    <h1>World Cup Draw 2026</h1>
+  </div>
   <div class="card">
     <div class="row" style="margin-bottom:16px">
       <button class="${create ? '' : 'secondary'}" data-action="mode" data-mode="create" style="margin:0">Create pool</button>
@@ -203,7 +362,7 @@ function renderPool() {
   const statusChip = { setup: 'Lobby', drafting: 'Live draft', done: 'Drafted' }[p.status] || p.status;
   return `
   <div class="app-header">
-    <span class="ball">⚽</span>
+    <button class="back-btn" data-action="go-dashboard">‹</button>
     <h1>${esc(p.name)}</h1>
     <span class="spacer"></span>
     <span class="chip">${statusChip}</span>
@@ -229,7 +388,7 @@ function renderDraftTab() {
 }
 
 function renderLobby() {
-  const link = `${location.origin}/?join=${S.pool.joinCode}`;
+  const link = poolUrl(S.pool.joinCode);
   const canStart = isCommissioner() && S.players.length >= 2;
   return `
   <div class="card">
@@ -561,6 +720,17 @@ const val = (id) => document.getElementById(id)?.value.trim() || '';
 const actions = {
   mode(el) { S.homeMode = el.dataset.mode; S.error = ''; render(); },
 
+  // ---- navigation ----
+  'go-dashboard'() { S.error = ''; navigate('/'); },
+  'go-create'() { S.error = ''; S.homeMode = 'create'; S.view = 'forms'; render(); },
+  'go-join'() { S.error = ''; S.homeMode = 'join'; S.prefillCode = ''; S.view = 'forms'; render(); },
+  'open-pool'(el) { navigate(`/p/${el.dataset.code}`); },
+  'remove-pool'(el) {
+    removePoolLocal(el.dataset.id);
+    S.myPools = (S.myPools || []).filter((p) => p.poolId !== el.dataset.id);
+    render();
+  },
+
   async 'create-pool'() {
     S.error = '';
     const name = val('pool-name'), commissionerName = val('commish-name');
@@ -568,9 +738,8 @@ const actions = {
     try {
       const r = await api('/api/pools', { method: 'POST', body: { name, commissionerName } });
       S.token = r.player.token; S.me = r.player;
-      saveIdentity(r.token ?? r.player.token, r.pool.id);
-      saveIdentity(r.player.token, r.pool.id);
-      await enterPool(r.pool.id);
+      savePool(r.pool.id, { token: r.player.token, playerId: r.player.id, code: r.pool.joinCode, name: r.pool.name });
+      navigate(`/p/${r.pool.joinCode}`);
     } catch (e) { S.error = e.message; render(); }
   },
 
@@ -581,15 +750,32 @@ const actions = {
     try {
       const r = await api(`/api/pools/${code}/join`, { method: 'POST', body: { name } });
       S.token = r.player.token; S.me = r.player;
-      saveIdentity(r.player.token, r.pool.id);
-      await enterPool(r.pool.id);
+      savePool(r.pool.id, { token: r.player.token, playerId: r.player.id, code: r.pool.joinCode, name: r.pool.name });
+      navigate(`/p/${r.pool.joinCode}`);
     } catch (e) { S.error = e.message; render(); }
+  },
+
+  async 'join-prompt-submit'() {
+    S.error = '';
+    const name = val('jp-name');
+    if (!name) { S.error = 'Enter your name.'; return render(); }
+    try {
+      const r = await api(`/api/pools/${S.joinPool.joinCode}/join`, { method: 'POST', body: { name } });
+      savePool(r.pool.id, { token: r.player.token, playerId: r.player.id, code: r.pool.joinCode, name: r.pool.name });
+      navigate(`/p/${r.pool.joinCode}`);
+    } catch (e) { S.error = e.message; render(); }
+  },
+
+  async 'watch-pool'() {
+    // open as a spectator (no token) — view-only
+    S.token = null; S.me = null;
+    await enterPool(S.joinPool.id);
   },
 
   tab(el) { S.tab = el.dataset.tab; S.error = ''; refreshAux().then(render); render(); },
 
   'copy-code'() { copy(S.pool.joinCode); toast('Code copied'); },
-  'copy-link'() { copy(`${location.origin}/?join=${S.pool.joinCode}`); toast('Invite link copied'); },
+  'copy-link'() { copy(poolUrl(S.pool.joinCode)); toast('Invite link copied'); },
 
   async 'shuffle-order'() {
     try { await api(`/api/pools/${S.pool.id}/order`, { method: 'POST', body: { token: S.token } }); S.notice = 'Draft order shuffled.'; render(); }
@@ -694,7 +880,9 @@ document.addEventListener('click', (e) => {
 
 // Enter-to-submit on home inputs
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || S.screen !== 'home') return;
+  if (e.key !== 'Enter') return;
+  if (S.view === 'joinPrompt') return actions['join-prompt-submit']();
+  if (S.view !== 'forms' && !(S.view === 'dashboard' && (!S.myPools || !S.myPools.length))) return;
   if (S.homeMode === 'create') actions['create-pool']();
   else actions['join-pool']();
 });

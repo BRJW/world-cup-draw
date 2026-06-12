@@ -35,9 +35,31 @@ body {
   padding: 18px 2px 14px; position: sticky; top: 0; z-index: 20;
   background: linear-gradient(var(--bg) 70%, transparent);
 }
-.app-header h1 { font-size: 19px; margin: 0; letter-spacing: .2px; }
+.app-header h1 { font-size: 19px; margin: 0; letter-spacing: .2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-header .ball { font-size: 26px; }
 .app-header .spacer { flex: 1; }
+.back-btn {
+  width: 36px; height: 36px; flex: none; margin: 0; padding: 0;
+  background: var(--card); border: 1px solid var(--line); color: var(--txt);
+  border-radius: 50%; font-size: 22px; line-height: 1; display: grid; place-items: center;
+}
+
+/* ---- dashboard ---- */
+.dash-actions { display: flex; gap: 10px; margin-bottom: 18px; }
+.dash-actions button { margin: 0; }
+.section-h { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin: 0 0 10px 2px; }
+.pool-card { position: relative; cursor: pointer; transition: transform .06s ease, border-color .2s; }
+.pool-card:active { transform: scale(.99); }
+.pool-card-top { display: flex; align-items: center; gap: 10px; }
+.pool-card-name { font-size: 17px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pool-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.pool-flags { font-size: 20px; letter-spacing: 2px; }
+.pool-x {
+  position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; margin: 0; padding: 0;
+  background: transparent; color: var(--muted); border: 0; font-size: 14px; border-radius: 50%;
+  display: grid; place-items: center; opacity: .5;
+}
+.pool-x:active { background: rgba(255,255,255,.08); }
 .chip {
   background: var(--card); border: 1px solid var(--line); color: var(--muted);
   padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
