@@ -11,7 +11,9 @@ const S = {
   homeMode: 'create',    // 'create' | 'join'
   tab: 'draft',          // draft | teams | standings | scores
   teams: [],
-  potSize: 12,
+  maxPlayers: 12,
+  teamsPerPlayer: 4,
+  rounds: [],
   me: null,              // {id,name,isCommissioner}
   token: null,
   pool: null,
@@ -85,7 +87,8 @@ async function boot() {
 
   try {
     const t = await api('/api/teams');
-    S.teams = t.teams; S.potSize = t.potSize;
+    S.teams = t.teams; S.maxPlayers = t.maxPlayers;
+    S.teamsPerPlayer = t.teamsPerPlayer || 4; S.rounds = t.rounds || [];
   } catch { /* non-fatal */ }
 
   const ident = loadIdentity();
@@ -160,7 +163,7 @@ function renderHome() {
     </div>
     ${create ? `
       <h2>Start a new pool</h2>
-      <p class="sub">12 friends, 4 pots of 12. Everyone drafts one team from each pot — one giant, one contender, one dark horse, one minnow.</p>
+      <p class="sub">Up to 12 friends. 48 teams in 8 odds-based tiers, drafted in balanced pairs — every squad of four ends up equally weighted, so it comes down to who you back.</p>
       <label>Pool name</label>
       <input type="text" id="pool-name" placeholder="The Lads' World Cup" maxlength="40" />
       <label>Your name (you'll be commissioner)</label>
@@ -222,7 +225,7 @@ function renderLobby() {
   return `
   <div class="card">
     <h2>Invite your crew</h2>
-    <p class="sub">Share this code or link. Up to ${S.potSize} players.</p>
+    <p class="sub">Share this code or link. Up to ${S.maxPlayers} players.</p>
     <div class="share-box">
       <span class="code">${esc(S.pool.joinCode)}</span>
       <button class="secondary btn-inline" data-action="copy-code">Copy</button>
@@ -233,13 +236,13 @@ function renderLobby() {
     </div>
   </div>
   <div class="card">
-    <h2>Players <span class="muted small">(${S.players.length}/${S.potSize})</span></h2>
+    <h2>Players <span class="muted small">(${S.players.length}/${S.maxPlayers})</span></h2>
     <div>${S.players.map(playerRow).join('')}</div>
   </div>
   <div class="card">
     ${isCommissioner() ? `
       <h2>Run the draft</h2>
-      <p class="sub">Order is randomized at kickoff (you can reshuffle). Each player gets one team from every pot.</p>
+      <p class="sub">Order is randomized at kickoff (you can reshuffle). Four rounds: each player draws a headliner and a complementary balancer in each half of the field.</p>
       <button class="secondary" data-action="shuffle-order">🔀 Shuffle draft order</button>
       <button data-action="start-draft" ${canStart ? '' : 'disabled'}>Start the live draw →</button>
       ${S.players.length < 2 ? '<p class="muted small center">Need at least 2 players to start.</p>' : ''}
@@ -267,16 +270,18 @@ function playerRow(pl) {
 
 function renderLiveDraft() {
   const turn = S.currentTurn;
-  const totalPicks = S.players.length * 4;
+  const totalPicks = S.players.length * S.teamsPerPlayer;
   const made = S.picks.length;
   const pct = Math.round((made / totalPicks) * 100);
   const canDraw = turn && (isCommissioner() || S.me?.id === turn.playerId);
   const turnNm = turn ? playerName(turn.playerId) : '';
   const isMyTurn = turn && S.me?.id === turn.playerId;
+  const ri = turn ? S.rounds[turn.round - 1] : null;
+  const roundLabel = turn ? `Round ${turn.round}/4 · ${ri ? ri.label : ''}` : 'Draw complete';
 
   return `
   <div class="stage">
-    <div class="turnline">Pot ${turn ? turn.pot : 4} · Pick ${made + (turn ? 1 : 0)} of ${totalPicks}</div>
+    <div class="turnline">${esc(roundLabel)} · Pick ${made + (turn ? 1 : 0)} of ${totalPicks}</div>
     <div class="turnname">${turn ? `${esc(turnNm)}${isMyTurn ? ' (you)' : ''} is up` : 'Draw complete'}</div>
     <div class="reveal" id="reveal">${lastFlag()}</div>
     <div class="reveal-name" id="reveal-name"></div>
@@ -286,7 +291,7 @@ function renderLiveDraft() {
   ${canDraw ? `<button data-action="draw-next" id="draw-btn">${isMyTurn ? '🎲 Draw your team!' : '🎲 Draw next team'}</button>` : ''}
   ${!canDraw && turn ? `<p class="center muted">Waiting for ${esc(turnNm)} to draw…</p>` : ''}
   <div class="error">${esc(S.error)}</div>
-  ${renderPotBoard()}
+  ${renderTierBoard()}
   ${renderRecentPicks()}`;
 }
 
@@ -295,17 +300,19 @@ function lastFlag() {
   return last ? (teamByCode(last.teamCode)?.flag || '⚽') : '🎩';
 }
 
-function renderPotBoard() {
+const PAIR_HINT = { 1: '↔ T4', 2: '↔ T3', 3: '↔ T2', 4: '↔ T1', 5: '↔ T8', 6: '↔ T7', 7: '↔ T6', 8: '↔ T5' };
+
+function renderTierBoard() {
   const taken = takenCodes();
   let cols = '';
-  for (const pot of [1, 2, 3, 4]) {
-    const teams = S.teams.filter((t) => t.pot === pot).sort((a, b) => a.rank - b.rank);
+  for (const tier of [1, 2, 3, 4, 5, 6, 7, 8]) {
+    const teams = S.teams.filter((t) => t.tier === tier);
     cols += `<div class="pot-col">
-      <h4><span class="pot-pill pot-${pot}">POT ${pot}</span></h4>
-      ${teams.map((t) => `<div class="mini-team ${taken.has(t.code) ? 'taken' : ''}"><span>${t.flag}</span><span>${esc(t.name)}</span></div>`).join('')}
+      <h4><span class="tier-pill t${tier}">TIER ${tier}</span> <span class="muted" style="font-size:10px">${PAIR_HINT[tier]}</span></h4>
+      ${teams.map((t) => `<div class="mini-team ${taken.has(t.code) ? 'taken' : ''}"><span>${t.flag}</span><span class="mt-name">${esc(t.name)}</span><span class="mt-odds">${esc(t.odds)}</span></div>`).join('')}
     </div>`;
   }
-  return `<div class="card"><h2>The pots</h2><div class="pot-board">${cols}</div></div>`;
+  return `<div class="card"><h2>The 8 tiers <span class="muted small">· odds to win</span></h2><div class="pot-board">${cols}</div></div>`;
 }
 
 function renderRecentPicks() {
@@ -316,7 +323,7 @@ function renderRecentPicks() {
       const t = p.team || teamByCode(p.teamCode);
       return `<div class="team"><span class="flag">${t?.flag || '⚽'}</span>
         <span class="tname">${esc(t?.name || p.teamCode)}</span>
-        <span class="pot-pill pot-${p.pot}">P${p.pot}</span>
+        <span class="tier-pill t${t?.tier || 1}">T${t?.tier || '?'}</span>
         <span class="rec">→ ${esc(playerName(p.playerId))}</span></div>`;
     }).join('')}
   </div>`;
@@ -337,8 +344,9 @@ function renderAllSquads() {
   return `<div class="card"><h2>All squads</h2>
     ${S.players.map((pl) => {
       const teams = S.picks.filter((p) => p.playerId === pl.id)
-        .sort((a, b) => a.pot - b.pot)
-        .map((p) => (p.team || teamByCode(p.teamCode))?.flag || '⚽').join(' ');
+        .map((p) => p.team || teamByCode(p.teamCode))
+        .sort((a, b) => (a?.tier || 0) - (b?.tier || 0))
+        .map((t) => t?.flag || '⚽').join(' ');
       return `<div class="player-row">
         <div class="avatar">${esc(initials(pl.name))}</div>
         <div class="name">${esc(pl.name)}</div>
@@ -355,17 +363,17 @@ function renderTeamsTab() {
   if (!mine.length) {
     return `<div class="card empty">You don't have any teams yet.<br/>They'll appear here once the draft runs.</div>`;
   }
-  const sorted = [...mine].sort((a, b) => a.pot - b.pot);
+  const sorted = [...mine].sort((a, b) => a.tier - b.tier);
   return `<div class="card">
     <h2>Your squad, ${esc(S.me.name)}</h2>
-    <p class="sub">One from each pot. Win = 3 pts, draw = 1.</p>
+    <p class="sub">Four teams, balanced across the tiers. Win = 3 pts, draw = 1.</p>
     ${sorted.map((t) => {
       const r = t.record;
       const rec = r ? `${r.played}P · ${r.w}W ${r.d}D ${r.l}L · ${r.pts} pts` : 'No matches yet';
       return `<div class="team">
         <span class="flag">${t.flag || '⚽'}</span>
-        <span class="tname">${esc(t.name)}</span>
-        <span class="pot-pill pot-${t.pot}">POT ${t.pot}</span>
+        <span class="tname">${esc(t.name)}<br/><span class="muted small">${esc(t.odds || '')} to win</span></span>
+        <span class="tier-pill t${t.tier}">TIER ${t.tier}</span>
         <span class="rec" style="margin-left:8px">${rec}</span>
       </div>`;
     }).join('')}
@@ -446,10 +454,10 @@ function animateReveal(pick) {
   const btn = document.getElementById('draw-btn');
   if (btn) btn.disabled = true;
 
-  const potTeams = S.teams.filter((t) => t.pot === pick.pot);
+  const spinPool = S.teams.filter((t) => t.tier === team.tier);
   let ticks = 0;
   const spin = setInterval(() => {
-    const r = potTeams[Math.floor(Math.random() * potTeams.length)];
+    const r = spinPool[Math.floor(Math.random() * spinPool.length)];
     reveal.textContent = r.flag;
     if (nameEl) nameEl.textContent = '…';
     if (++ticks > 11) {

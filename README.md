@@ -1,6 +1,6 @@
 # ⚽ World Cup Draw 2026
 
-A live, mobile-first draft pool for the 2026 World Cup. Up to **12 friends**, **4 pots of 12 teams**, and everyone drafts **one team from each pot** — so every player ends up with one giant, one contender, one dark horse, and one minnow. No one can luck into four powerhouses.
+A live, mobile-first draft pool for the 2026 World Cup. Up to **12 friends**, **48 teams in 8 tiers of 6** seeded by **Vegas odds**, drafted in **complementary pairs** so every squad of four is equally weighted. No one can luck into four powerhouses — it comes down to who you back.
 
 Built as a **single Node service** (Express + Socket.IO) so the live draw streams in real time, with Postgres for storage. No frontend build step — deploys clean.
 
@@ -8,8 +8,8 @@ Built as a **single Node service** (Express + Socket.IO) so the live draw stream
 
 - **Create / join pools** with a 6-letter code or share link.
 - **Live draw** — teams are revealed one at a time with an animated reveal, broadcast over websockets to everyone watching. The commissioner (or the player on the clock) pulls each ball.
-- **Snake order through the pots**, seeded by FIFA ranking; hosts (USA, Mexico, Canada) sit in Pot 1.
-- **My Teams** — your four squads and their records at a glance.
+- **8 tiers of 6, seeded by Vegas odds**, with complementary pairing (see below).
+- **My Teams** — your four squads, their tiers, odds, and records at a glance.
 - **Standings** — a leaderboard combining each player's teams (3 pts win / 1 draw, goal difference tiebreak).
 - **Scores** — the commissioner enters results as games finish (manual override means you're never blocked by a lagging data feed).
 
@@ -37,19 +37,34 @@ Required env: nothing manual — `PORT` and `DATABASE_URL` are provided by Railw
 
 ## How the draw works
 
-- 48 teams split into 4 pots of 12 by FIFA ranking (`data/teams.js` — edit freely as 2026 qualification finalizes; pot balance only needs 12 per pot).
-- The commissioner starts the draw; order is randomized (and reshufflable).
-- The draft snakes through the pots: Pot 1 in order, Pot 2 reversed, and so on. Within each pot, each player's team is drawn at random from those still available.
-- With 12 players the whole field is drafted; with fewer, each player still gets exactly one team per pot and the rest go undrafted.
+48 teams are split into **8 tiers of 6** by outright odds to win (`data/teams.js` — array order is the seeding; update as lines move). Tiers are drafted in **complementary pairs** so every squad's tier-sum is identical:
+
+| Upper half | | Lower half | |
+|---|---|---|---|
+| Tier 1 (1–6) ↔ Tier 4 (19–24) | sum 5 | Tier 5 (25–30) ↔ Tier 8 (43–48) | sum 13 |
+| Tier 2 (7–12) ↔ Tier 3 (13–18) | sum 5 | Tier 6 (31–36) ↔ Tier 7 (37–42) | sum 13 |
+
+So if you draw a **top-6** side you also get a **19–24** side (never a 13–18); a 7–12 side comes with a 13–18, and so on. Every player ends with four teams summing to tiers **5 + 13 = 18** — perfectly balanced.
+
+The draft runs in **4 snake-order rounds**:
+
+1. **Upper headliner** — a random team from Tier 1 ∪ Tier 2
+2. **Upper balancer** — its complement (Tier 1→4, Tier 2→3)
+3. **Lower pick** — a random team from Tier 5 ∪ Tier 6
+4. **Lower balancer** — its complement (Tier 5→8, Tier 6→7)
+
+With 12 players the whole field is drafted; with fewer, the pairing still holds and the rest go undrafted.
+
+**Odds source:** BetMGM via Yahoo Sports, as the tournament opened (June 2026).
 
 ## Project layout
 
 ```
 server.js          Express + Socket.IO server, REST API, live broadcast
 lib/store.js       Storage layer (Postgres in prod, in-memory fallback)
-lib/draw.js        Draw engine + scoring/leaderboard (pure functions)
+lib/draw.js        Draw engine (8-tier pairing) + scoring/leaderboard
 lib/ids.js         Join codes & tokens
-data/teams.js      The 48-team field, seeded into pots
+data/teams.js      The 48-team field, odds, seeded into 8 tiers
 public/            Zero-build SPA (index.html, app.js, styles.css)
 ```
 

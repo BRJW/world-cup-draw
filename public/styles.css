@@ -116,6 +116,19 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .pot-1 { background: var(--pot1); } .pot-2 { background: var(--pot2); }
 .pot-3 { background: var(--pot3); } .pot-4 { background: var(--pot4); }
 
+/* ---- tier pills (8 tiers, gold -> grey) ---- */
+.tier-pill { font-size: 10px; font-weight: 800; padding: 3px 7px; border-radius: 6px; color: #0b1437; white-space: nowrap; }
+.tier-pill.t1 { background: #ffd54f; }
+.tier-pill.t2 { background: #ffca5a; }
+.tier-pill.t3 { background: #b3e07a; }
+.tier-pill.t4 { background: #7fd6c2; }
+.tier-pill.t5 { background: #6fc3e8; }
+.tier-pill.t6 { background: #9fa8e8; }
+.tier-pill.t7 { background: #c0a6d8; }
+.tier-pill.t8 { background: #b9c2d6; }
+.mt-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt-odds { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+
 /* ---- team chips ---- */
 .team {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px;

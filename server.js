@@ -6,8 +6,8 @@ import { Server as SocketServer } from 'socket.io';
 
 import { createStore } from './lib/store.js';
 import {
-  TEAMS, POT_SIZE, currentTurn, advance, randomTeamForCurrentPot,
-  leaderboard, teamsForPlayer,
+  TEAMS, MAX_PLAYERS, ROUND_COUNT, TEAMS_PER_PLAYER, ROUND_INFO,
+  currentTurn, advance, randomTeamForTurn, leaderboard, teamsForPlayer,
 } from './lib/draw.js';
 import { teamByCode } from './data/teams.js';
 
@@ -43,7 +43,7 @@ async function fullState(poolId) {
     pool: publicPool(pool),
     players: players.map(publicPlayer),
     picks: picks.map((p) => ({
-      playerId: p.playerId, teamCode: p.teamCode, pot: p.pot,
+      playerId: p.playerId, teamCode: p.teamCode, round: p.pot,
       pickNumber: p.pickNumber, team: teamByCode(p.teamCode),
     })),
     currentTurn: currentTurn(pool),
@@ -71,7 +71,10 @@ async function requireCommissioner(token, poolId) {
 // ---- routes ----------------------------------------------------------------
 app.get('/api/health', (req, res) => res.json({ ok: true, backend: store.backend }));
 
-app.get('/api/teams', (req, res) => res.json({ teams: TEAMS, potSize: POT_SIZE }));
+app.get('/api/teams', (req, res) => res.json({
+  teams: TEAMS, maxPlayers: MAX_PLAYERS, roundCount: ROUND_COUNT,
+  teamsPerPlayer: TEAMS_PER_PLAYER, rounds: ROUND_INFO,
+}));
 
 // Create a pool (creator becomes commissioner)
 app.post('/api/pools', async (req, res) => {
@@ -101,7 +104,7 @@ app.post('/api/pools/:code/join', async (req, res) => {
   if (!pool) return res.status(404).json({ error: 'pool not found' });
   if (pool.status !== 'setup') return res.status(409).json({ error: 'draft already started' });
   const players = await store.getPlayers(pool.id);
-  if (players.length >= POT_SIZE) return res.status(409).json({ error: `pool full (max ${POT_SIZE})` });
+  if (players.length >= MAX_PLAYERS) return res.status(409).json({ error: `pool full (max ${MAX_PLAYERS})` });
   if (players.some((p) => p.name.toLowerCase() === name.toLowerCase()))
     return res.status(409).json({ error: 'name already taken in this pool' });
   const player = await store.addPlayer(pool.id, name);
@@ -174,18 +177,18 @@ app.post('/api/pools/:id/draw', async (req, res) => {
     return res.status(403).json({ error: 'not your pick' });
 
   const picks = await store.getPicks(poolId);
-  const team = randomTeamForCurrentPot(pool, picks);
-  if (!team) return res.status(409).json({ error: 'no teams left in pot' });
+  const team = randomTeamForTurn(pool, picks, turn);
+  if (!team) return res.status(409).json({ error: 'no eligible teams left for this pick' });
 
   const pick = await store.recordPick({
     poolId, playerId: turn.playerId, teamCode: team.code,
-    pot: turn.pot, pickNumber: turn.pickNumber,
+    pot: turn.round, pickNumber: turn.pickNumber,
   });
   await store.updatePool(poolId, advance(pool));
 
   const state = await broadcast(poolId, {
     event: 'pick',
-    pick: { playerId: turn.playerId, teamCode: team.code, pot: turn.pot, pickNumber: turn.pickNumber, team },
+    pick: { playerId: turn.playerId, teamCode: team.code, round: turn.round, pickNumber: turn.pickNumber, team },
   });
   res.json({ pick, team, state });
 });
