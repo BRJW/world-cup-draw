@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=8';
+import { playAnnouncement } from '/announce.js?v=9';
 
 const $app = document.getElementById('app');
 
@@ -56,9 +56,11 @@ async function api(path, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Socket
+// Socket  (degrade gracefully if socket.io failed to load — never blank-screen)
 // ---------------------------------------------------------------------------
-const socket = io({ autoConnect: true });
+const socket = (typeof io !== 'undefined')
+  ? io({ autoConnect: true })
+  : { on() {}, emit() {}, on_stub: true };
 let joinedPoolId = null;
 
 socket.on('connect', () => { if (S.pool) joinRoom(S.pool.id); });
