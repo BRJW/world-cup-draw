@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0b1437" />
   <title>Flag animations — World Cup Draw</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=8" />
   <style>
     .pv-head { padding: 18px 2px 4px; }
     .pv-head h1 { font-size: 18px; margin: 0 0 6px; }
@@ -30,6 +30,29 @@
     .pv-cell .nm { font-weight: 600; }
     .pv-cell .od { color: var(--muted); font-size: 11px; }
   </style>
+  <script>
+    (function () {
+      var shown = false;
+      function show(t, d) {
+        if (shown) return; shown = true;
+        document.body.innerHTML =
+          '<div style="padding:24px 18px;color:#eef2ff;font-family:-apple-system,system-ui,sans-serif">' +
+          '<div style="font-size:40px">⚠️</div><h2 style="color:#ff5470">' + t + '</h2>' +
+          '<pre style="white-space:pre-wrap;word-break:break-word;background:#0e1640;border:1px solid #2d3f8f;padding:12px;border-radius:10px;font-size:12px;color:#ffd54f">' +
+          String(d || '').replace(/[<>&]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }) + '</pre>' +
+          '<button onclick="location.reload(true)" style="margin-top:14px;padding:14px;border:0;border-radius:12px;background:#00e676;color:#04210f;font-weight:800;width:100%">Reload</button>' +
+          '<p style="color:#5a6aa0;font-size:11px;margin-top:12px">build v8 · ' + navigator.userAgent + '</p></div>';
+      }
+      window.addEventListener('error', function (e) {
+        if (e && e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK'))
+          show('Could not load a file', 'Failed: ' + (e.target.src || e.target.href));
+        else show('Script error', (e.message || 'Unknown') + (e.filename ? ('\n' + e.filename + ':' + e.lineno) : '') + (e.error && e.error.stack ? '\n\n' + e.error.stack : ''));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e && e.reason; show('Failed', (r && (r.stack || r.message)) || String(r));
+      });
+    })();
+  </script>
 </head>
 <body>
   <div id="app">
@@ -38,16 +61,16 @@
       <p>Flags build in below. <b>Tap any flag</b> to play its full draw announcement.</p>
       <button id="play-random" class="secondary" style="margin-top:0">🎲 Play a random one</button>
     </div>
-    <div class="pv-grid" id="grid"></div>
+    <div class="pv-grid" id="grid"><div class="loading" style="text-align:center;color:var(--muted);padding:40px">Loading flags…</div></div>
   </div>
   <script type="module">
-    import { flagSVG } from '/flags.js';
-    import { playAnnouncement } from '/announce.js';
+    import { flagSVG } from '/flags.js?v=8';
+    import { playAnnouncement } from '/announce.js?v=8';
 
-    const teams = await fetch('/api/teams').then((r) => r.json()).then((d) => d.teams);
-    const grid = document.getElementById('grid');
+    async function start() {
+      const grid = document.getElementById('grid');
+      const teams = await fetch('/api/teams').then((r) => r.json()).then((d) => d.teams);
 
-    function renderGrid() {
       grid.innerHTML = teams.map((t, i) =>
         `<div class="pv-cell" data-code="${t.code}" style="animation-delay:${i * 45}ms">
           <div class="pv-flag">${flagSVG(t.code, t)}</div>
@@ -55,32 +78,25 @@
           <div class="od">Tier ${t.tier} · ${t.odds}</div>
         </div>`
       ).join('');
-      // stagger each flag's layer-build after its cell appears
       grid.querySelectorAll('.pv-cell').forEach((cell, i) => {
         cell.querySelectorAll('.fl').forEach((l) => {
           const base = parseFloat(l.style.animationDelay) || 0;
           l.style.animationDelay = `${i * 45 + base}ms`;
         });
       });
-    }
-    renderGrid();
 
-    function demo(team) {
-      playAnnouncement({
-        team,
-        roundLabel: `PREVIEW · TIER ${team.tier}`,
+      const demo = (team) => playAnnouncement({
+        team, roundLabel: `PREVIEW · TIER ${team.tier}`,
         coach: { name: 'You', teamName: 'Your Club FC' },
       });
+      grid.addEventListener('click', (e) => {
+        const cell = e.target.closest('.pv-cell');
+        if (cell) demo(teams.find((t) => t.code === cell.dataset.code));
+      });
+      document.getElementById('play-random').addEventListener('click', () =>
+        demo(teams[Math.floor(Math.random() * teams.length)]));
     }
-
-    grid.addEventListener('click', (e) => {
-      const cell = e.target.closest('.pv-cell');
-      if (!cell) return;
-      demo(teams.find((t) => t.code === cell.dataset.code));
-    });
-    document.getElementById('play-random').addEventListener('click', () => {
-      demo(teams[Math.floor(Math.random() * teams.length)]);
-    });
+    start();
   </script>
 </body>
 </html>

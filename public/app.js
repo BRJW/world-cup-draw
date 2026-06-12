@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js';
+import { playAnnouncement } from '/announce.js?v=8';
 
 const $app = document.getElementById('app');
 
