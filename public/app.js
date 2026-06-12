@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=16';
+import { playAnnouncement } from '/announce.js?v=17';
 
 const $app = document.getElementById('app');
 
@@ -676,7 +676,7 @@ function renderStandingsTab() {
   const tie = S.leaderboard.filter((r) => r.pts === leader.pts).length > 1;
   return `<div class="card">
     <h2>Standings</h2>
-    <div class="wta-banner"><span class="trophy">🏆</span><span>Winner takes all — whoever's four teams bank the most points by the final lifts the trophy.</span></div>
+    <div class="wta-banner"><span class="trophy">🏆</span><span>Winner takes all — whomever's team wins the cup, gets the cash!</span></div>
     ${S.leaderboard.map((row, i) => {
       const pl = S.players.find((p) => p.id === row.playerId);
       const isLeader = i === 0 && row.pts > 0 && !tie;
