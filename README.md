@@ -7,11 +7,27 @@ Built as a **single Node service** (Express + Socket.IO) so the live draw stream
 ## Features
 
 - **Create / join pools** with a 6-letter code or share link.
-- **Live draw** — teams are revealed one at a time with an animated reveal, broadcast over websockets to everyone watching. The commissioner (or the player on the clock) pulls each ball.
+- **Live draw** with **full-screen country announcements** — each pick is a themed takeover (team colours, crest, flag, odds, who drafted it), broadcast over websockets to everyone watching. The commissioner (or the player on the clock) pulls each ball.
 - **8 tiers of 6, seeded by Vegas odds**, with complementary pairing (see below).
 - **My Teams** — your four squads, their tiers, odds, and records at a glance.
-- **Standings** — a leaderboard combining each player's teams (3 pts win / 1 draw, goal difference tiebreak).
-- **Scores** — the commissioner enters results as games finish (manual override means you're never blocked by a lagging data feed).
+- **Standings** — a leaderboard combining each player's teams (3 pts win / 1 draw, goal difference tiebreak). Counts **final results only**, so a live game never flips the table.
+- **Scores & schedule** — all 104 fixtures auto-synced from ESPN (kickoff times, LIVE/FT status, scores) on an hourly cron, with a commissioner manual override for any match.
+
+## Live data (scores + schedule)
+
+Match data comes from **ESPN's public API** (`site.api.espn.com`, free, no key). On boot and hourly the server fetches every fixture, upserts it (`lib/espn.js` → `store.upsertMatchByExtId`), and pushes `matches-updated` over websockets. `data/schedule.json` is a committed snapshot used as a fallback seed if ESPN is unreachable at boot.
+
+- **Final vs live:** ESPN reports `status` (`pre`/`in`/`post`) and a `completed` flag. Standings count a match only when it's final (or a commissioner override); live games are shown but excluded.
+- **Manual override:** a commissioner score edit sets `manual=true` and the auto-sync never clobbers it; "↻ auto" reverts to the live feed.
+
+## Scheduled jobs (cron service)
+
+A tiny second Railway service (`cron.js`) runs on a cron schedule and pings job endpoints on the web service (`POST /api/cron/:job`, authorised by `CRON_SECRET`). It holds no logic — the work runs where the DB and websockets live. Adding a scheduled task is two steps:
+
+1. register it in the `JOBS` map in `server.js`
+2. point a cron service at it via `CRON_JOBS` + a `cronSchedule`
+
+The web service also keeps an in-process hourly sync as a backstop (disable with `SELF_SYNC=off` once the cron service owns scheduling). Railway's minimum cron interval is 5 minutes.
 
 ## Run locally
 
@@ -29,11 +45,13 @@ npm run dev        # auto-restart on file changes
 ## Deploy to Railway
 
 1. Push this repo to GitHub.
-2. In Railway: **New Project → Deploy from GitHub repo**, pick this repo.
+2. In Railway: **New Project → Deploy from GitHub repo**, pick this repo. Start command `npm start`.
 3. Add a **PostgreSQL** plugin. Railway injects `DATABASE_URL` automatically.
 4. Railway runs persistent containers, so Socket.IO websockets work with no extra config. It auto-deploys on every push.
 
-Required env: nothing manual — `PORT` and `DATABASE_URL` are provided by Railway. (`PGSSL=true` if your Postgres host requires SSL.)
+Optional **cron service** (same repo): add a second service, set its start command to `node cron.js` and a `cronSchedule` (e.g. `0 * * * *`), and give it `WEB_URL`, `CRON_JOBS=sync`, and the same `CRON_SECRET` as the web service. Because start commands are per-service, `railway.json` deliberately omits `startCommand`.
+
+Required env: `PORT` and `DATABASE_URL` come from Railway. Set `CRON_SECRET` on the web service to enable cron-triggered jobs. (`PGSSL=true` if your Postgres host requires SSL.)
 
 ## How the draw works
 
@@ -60,15 +78,18 @@ With 12 players the whole field is drafted; with fewer, the pairing still holds 
 ## Project layout
 
 ```
-server.js          Express + Socket.IO server, REST API, live broadcast
+server.js          Express + Socket.IO server, REST API, live broadcast, jobs
+cron.js            Tiny cron entrypoint (pings /api/cron/:job, then exits)
 lib/store.js       Storage layer (Postgres in prod, in-memory fallback)
 lib/draw.js        Draw engine (8-tier pairing) + scoring/leaderboard
+lib/espn.js        Live schedule + scores from ESPN's public API
 lib/ids.js         Join codes & tokens
-data/teams.js      The 48-team field, odds, seeded into 8 tiers
+data/teams.js      The 48-team field: odds, tiers, colours + crests
+data/schedule.json Committed fixture snapshot (fallback seed)
 public/            Zero-build SPA (index.html, app.js, styles.css)
 ```
 
 ## Roadmap
 
 - **SMS reminders** — deferred: Twilio A2P 10DLC carrier registration takes days-to-weeks, so it won't clear in time for the group stage. Link invites + in-app for now; texts can layer on later.
-- **Live score API** — wire a football-data feed into the `matches` table; the manual entry already in place stays as the override.
+- **Penalty shootouts** — ESPN reports the 120-minute draw; a knockout decided on penalties currently scores as a draw unless the commissioner overrides it.
