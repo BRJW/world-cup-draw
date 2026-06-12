@@ -184,10 +184,21 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .divider { height: 1px; background: var(--line); margin: 16px 0; }
-.match-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
-.match-row .t { flex: 1; }
-.match-row .sc { font-weight: 800; font-variant-numeric: tabular-nums; }
-.match-row.a-right .t.right { text-align: right; }
+.date-head { margin: 0 0 8px; font-size: 14px; color: var(--accent2); }
+.match-row { display: flex; align-items: center; gap: 8px; padding: 9px 0 2px; font-size: 14px; }
+.match-row .t { flex: 1; min-width: 0; }
+.match-row .t.right { text-align: right; }
+.match-row .sc { font-weight: 800; font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
+.match-row .sc.vs { color: var(--muted); font-weight: 600; font-size: 13px; }
+.match-row .sc.live { color: var(--accent); }
+.match-meta { text-align: center; font-size: 11px; color: var(--muted); padding-bottom: 9px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: center; gap: 5px; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); display: inline-block; animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+.manual-tag { color: var(--accent2); font-weight: 700; }
+.mini-edit { width: auto; margin: 0; padding: 4px 8px; background: var(--card2); color: var(--muted); border: 1px solid var(--line); font-size: 13px; border-radius: 8px; }
+.match-edit { display: flex; align-items: center; gap: 6px; padding: 8px 0 10px; border-bottom: 1px solid var(--line); }
+.match-edit input { width: 56px; padding: 8px; text-align: center; }
+.match-edit .btn-inline { margin: 0; }
 .toast {
   position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%);
   background: var(--card2); border: 1px solid var(--line); color: var(--txt);

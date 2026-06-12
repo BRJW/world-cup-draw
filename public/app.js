@@ -23,6 +23,10 @@ const S = {
   leaderboard: [],
   byPlayer: {},
   matches: [],
+  lastSync: null,
+  scoreFilter: 'all',    // 'all' | 'mine'
+  editMatchId: null,
+  syncing: false,
   error: '',
   notice: '',
   prefillCode: '',
@@ -122,7 +126,7 @@ async function refreshAux() {
     }
     if (S.tab === 'scores' || S.tab === 'standings') {
       const m = await api('/api/matches');
-      S.matches = m.matches;
+      S.matches = m.matches; S.lastSync = m.lastSync;
     }
   } catch { /* ignore */ }
 }
@@ -400,45 +404,99 @@ function renderStandingsTab() {
 }
 
 // ---- Scores tab ----
+const myCodes = () => new Set(S.picks.filter((p) => p.playerId === S.me?.id).map((p) => p.teamCode));
+
+function syncLine() {
+  if (!S.lastSync) return 'Auto-updates hourly from ESPN';
+  const mins = Math.round((Date.now() - new Date(S.lastSync)) / 60000);
+  const ago = mins <= 0 ? 'just now' : mins === 1 ? '1 min ago' : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)}h ago`;
+  return `Auto-updates hourly · last synced ${ago}`;
+}
+
 function renderScoresTab() {
-  const opts = S.teams.map((t) => `<option value="${t.code}">${t.flag} ${esc(t.name)}</option>`).join('');
+  const mine = myCodes();
+  let list = S.matches;
+  if (S.scoreFilter === 'mine' && mine.size) list = list.filter((m) => mine.has(m.teamA) || mine.has(m.teamB));
+
+  // group by local date
+  const groups = [];
+  const idx = {};
+  for (const m of list) {
+    const d = m.kickoff ? new Date(m.kickoff) : null;
+    const key = d ? d.toDateString() : 'TBD';
+    if (!(key in idx)) { idx[key] = groups.length; groups.push({ key, date: d, items: [] }); }
+    groups[idx[key]].items.push(m);
+  }
+
+  const filterToggle = mine.size ? `
+    <div class="row" style="margin-bottom:12px">
+      <button class="${S.scoreFilter === 'all' ? '' : 'secondary'}" data-action="score-filter" data-f="all" style="margin:0">All games</button>
+      <button class="${S.scoreFilter === 'mine' ? '' : 'secondary'}" data-action="score-filter" data-f="mine" style="margin:0">My teams</button>
+    </div>` : '';
+
   return `
-  ${isCommissioner() ? `
   <div class="card">
-    <h2>Add a result</h2>
-    <p class="sub">Enter final scores as games finish. Leave scores blank for an upcoming fixture.</p>
-    <div class="row">
-      <div><label>Home</label><select id="m-a">${opts}</select></div>
-      <div><label>Away</label><select id="m-b">${opts}</select></div>
-    </div>
-    <div class="row">
-      <div><label>Home goals</label><input type="number" id="m-sa" min="0" inputmode="numeric" /></div>
-      <div><label>Away goals</label><input type="number" id="m-sb" min="0" inputmode="numeric" /></div>
-    </div>
-    <label>Stage</label>
-    <select id="m-stage">
-      <option>Group</option><option>Round of 32</option><option>Round of 16</option>
-      <option>Quarter-final</option><option>Semi-final</option><option>Final</option>
-    </select>
-    <button data-action="add-match">Save result</button>
+    <h2>Scores & schedule</h2>
+    <p class="sub">${esc(syncLine())}</p>
+    ${filterToggle}
+    ${isCommissioner() ? `<button class="secondary" data-action="sync-now" ${S.syncing ? 'disabled' : ''}>${S.syncing ? 'Syncing…' : '↻ Sync now'}</button>` : ''}
     <div class="error">${esc(S.error)}</div>
-  </div>` : ''}
-  <div class="card">
-    <h2>Results & fixtures</h2>
-    ${S.matches.length ? S.matches.map(matchRow).join('') : '<div class="empty">No matches recorded yet.</div>'}
+  </div>
+  ${groups.length ? groups.map(renderDateGroup).join('') : '<div class="card"><div class="empty">No fixtures yet — they\'ll load from the live feed shortly.</div></div>'}`;
+}
+
+function renderDateGroup(g) {
+  const label = g.date
+    ? g.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    : 'To be decided';
+  return `<div class="card">
+    <h3 class="date-head">${esc(label)}</h3>
+    ${g.items.map(matchRow).join('')}
   </div>`;
 }
 
+function dispTeam(code, name) {
+  const t = teamByCode(code);
+  return t ? { flag: t.flag, name: t.name, real: true } : { flag: '⬚', name: name || code, real: false };
+}
+
 function matchRow(m) {
-  const a = teamByCode(m.teamA), b = teamByCode(m.teamB);
-  const score = (m.scoreA == null || m.scoreB == null) ? '<span class="muted">vs</span>' : `${m.scoreA} – ${m.scoreB}`;
+  const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const editing = S.editMatchId === m.id;
+  const hasScore = m.scoreA != null && m.scoreB != null;
+  const live = m.status === 'in';
+  const kickoff = m.kickoff ? new Date(m.kickoff).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+
+  let mid;
+  if (live) mid = `<span class="sc live">${m.scoreA}–${m.scoreB}</span>`;
+  else if (hasScore) mid = `<span class="sc">${m.scoreA}–${m.scoreB}</span>`;
+  else mid = `<span class="sc vs">${esc(kickoff || 'vs')}</span>`;
+
+  const statusTag = live ? `<span class="live-dot"></span>${esc(m.statusDetail || 'LIVE')}`
+    : m.status === 'post' ? 'FT'
+    : (m.stage && m.stage !== 'Group' ? esc(m.stage) : esc(kickoff));
+
+  const editBtn = (isCommissioner() && a.real && b.real)
+    ? `<button class="mini-edit" data-action="edit-match" data-id="${m.id}">✎</button>` : '';
+
+  const editor = editing ? `
+    <div class="match-edit">
+      <input type="number" id="ms-a-${m.id}" min="0" inputmode="numeric" value="${m.scoreA ?? ''}" />
+      <span>–</span>
+      <input type="number" id="ms-b-${m.id}" min="0" inputmode="numeric" value="${m.scoreB ?? ''}" />
+      <button class="btn-inline" data-action="save-match" data-id="${m.id}">Save</button>
+      ${m.manual ? `<button class="ghost btn-inline" data-action="auto-match" data-id="${m.id}">↻ auto</button>` : ''}
+      <button class="ghost btn-inline" data-action="cancel-edit">✕</button>
+    </div>` : '';
+
   return `<div class="match-row">
-    <span class="t right" style="text-align:right">${esc(a?.name || m.teamA)} ${a?.flag || ''}</span>
-    <span class="sc">${score}</span>
-    <span class="t">${b?.flag || ''} ${esc(b?.name || m.teamB)}</span>
-    ${isCommissioner() ? `<button class="danger" data-action="del-match" data-id="${m.id}">✕</button>` : ''}
+    <span class="t right">${esc(a.name)} ${a.flag}</span>
+    ${mid}
+    <span class="t">${b.flag} ${esc(b.name)}</span>
+    ${editBtn}
   </div>
-  <div class="small muted" style="text-align:center;margin:-4px 0 6px">${esc(m.stage || '')}</div>`;
+  <div class="match-meta">${statusTag}${m.manual ? ' · <span class="manual-tag">manual</span>' : ''}</div>
+  ${editor}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -525,22 +583,32 @@ const actions = {
     catch (e) { S.error = e.message; el.disabled = false; render(); }
   },
 
-  async 'add-match'() {
-    S.error = '';
-    const body = {
-      token: S.token, teamA: val('m-a'), teamB: val('m-b'),
-      scoreA: val('m-sa'), scoreB: val('m-sb'), stage: val('m-stage'),
-    };
-    if (body.teamA === body.teamB) { S.error = 'Pick two different teams.'; return render(); }
+  'score-filter'(el) { S.scoreFilter = el.dataset.f; render(); },
+
+  async 'sync-now'() {
+    S.error = ''; S.syncing = true; render();
+    try { await api('/api/sync', { method: 'POST', body: { token: S.token } }); await refreshAux(); toast('Scores refreshed'); }
+    catch (e) { S.error = e.message; }
+    finally { S.syncing = false; render(); }
+  },
+
+  'edit-match'(el) { S.editMatchId = el.dataset.id; render(); },
+  'cancel-edit'() { S.editMatchId = null; render(); },
+
+  async 'save-match'(el) {
+    const id = el.dataset.id; S.error = '';
+    const body = { token: S.token, scoreA: val(`ms-a-${id}`), scoreB: val(`ms-b-${id}`) };
     try {
-      await api('/api/matches', { method: 'POST', body });
-      await refreshAux(); toast('Result saved'); render();
+      await api(`/api/matches/${id}`, { method: 'PATCH', body });
+      S.editMatchId = null; await refreshAux(); toast('Score saved (override)'); render();
     } catch (e) { S.error = e.message; render(); }
   },
 
-  async 'del-match'(el) {
-    try { await api(`/api/matches/${el.dataset.id}?token=${S.token}`, { method: 'DELETE' }); await refreshAux(); render(); }
-    catch (e) { S.error = e.message; render(); }
+  async 'auto-match'(el) {
+    try {
+      await api(`/api/matches/${el.dataset.id}`, { method: 'PATCH', body: { token: S.token, auto: true } });
+      S.editMatchId = null; await refreshAux(); toast('Reverted to live feed'); render();
+    } catch (e) { S.error = e.message; render(); }
   },
 };
 

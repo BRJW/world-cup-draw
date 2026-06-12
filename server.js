@@ -1,5 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { Server as SocketServer } from 'socket.io';
@@ -10,6 +11,7 @@ import {
   currentTurn, advance, randomTeamForTurn, leaderboard, teamsForPlayer,
 } from './lib/draw.js';
 import { teamByCode } from './data/teams.js';
+import { fetchAllMatches } from './lib/espn.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -195,7 +197,7 @@ app.post('/api/pools/:id/draw', async (req, res) => {
 
 // ---- scores / matches ------------------------------------------------------
 app.get('/api/matches', async (req, res) => {
-  res.json({ matches: await store.listMatches() });
+  res.json({ matches: await store.listMatches(), lastSync });
 });
 
 app.get('/api/pools/:id/leaderboard', async (req, res) => {
@@ -237,6 +239,10 @@ app.patch('/api/matches/:id', async (req, res) => {
   const fields = {};
   for (const k of ['teamA', 'teamB', 'stage']) if (k in req.body) fields[k] = req.body[k];
   for (const k of ['scoreA', 'scoreB']) if (k in req.body) fields[k] = req.body[k] === '' || req.body[k] == null ? null : Number(req.body[k]);
+  // Reverting to the live feed: clear the manual override so the poller resumes.
+  if (req.body.auto === true) fields.manual = false;
+  // Any commissioner score edit locks the result against the auto-sync.
+  else if ('scoreA' in fields || 'scoreB' in fields) fields.manual = true;
   const match = await store.updateMatch(req.params.id, fields);
   if (!match) return res.status(404).json({ error: 'not found' });
   io.emit('matches-updated');
@@ -249,6 +255,55 @@ app.delete('/api/matches/:id', async (req, res) => {
   io.emit('matches-updated');
   res.json({ ok });
 });
+
+// ---- live schedule + score sync (ESPN, hourly) ----------------------------
+const SCHEDULE_SNAPSHOT = (() => {
+  try { return JSON.parse(readFileSync(path.join(__dirname, 'data', 'schedule.json'), 'utf8')); }
+  catch { return []; }
+})();
+
+let lastSync = null;
+let syncing = false;
+
+async function syncSchedule({ seedIfEmpty = false } = {}) {
+  if (syncing) return { skipped: true };
+  syncing = true;
+  try {
+    let matches = await fetchAllMatches().catch((e) => {
+      console.error('[sync] ESPN fetch failed:', e.message);
+      return [];
+    });
+    let source = 'espn';
+    if (!matches.length) {
+      const existing = await store.listMatches();
+      if (seedIfEmpty && existing.length === 0 && SCHEDULE_SNAPSHOT.length) {
+        console.log('[sync] ESPN unavailable — seeding from committed snapshot');
+        matches = SCHEDULE_SNAPSHOT; source = 'snapshot';
+      } else {
+        return { updated: 0, source: 'none', lastSync };
+      }
+    }
+    for (const m of matches) {
+      try { await store.upsertMatchByExtId(m); }
+      catch (e) { console.error('[sync] upsert failed for', m.extId, e.message); }
+    }
+    lastSync = new Date().toISOString();
+    io.emit('matches-updated');
+    console.log(`[sync] ${matches.length} fixtures from ${source} at ${lastSync}`);
+    return { updated: matches.length, source, lastSync };
+  } finally {
+    syncing = false;
+  }
+}
+
+// Force a refresh now (commissioner).
+app.post('/api/sync', async (req, res) => {
+  if (!(await isAnyCommissioner(req.body?.token))) return res.status(403).json({ error: 'commissioner only' });
+  const result = await syncSchedule();
+  res.json(result);
+});
+
+app.get('/api/sync/status', (req, res) => res.json({ lastSync }));
 
 // ---- socket.io -------------------------------------------------------------
 io.on('connection', (socket) => {
@@ -264,4 +319,10 @@ io.on('connection', (socket) => {
 // ---- SPA fallback ----------------------------------------------------------
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-server.listen(PORT, () => console.log(`World Cup Draw listening on :${PORT}`));
+server.listen(PORT, () => {
+  console.log(`World Cup Draw listening on :${PORT}`);
+  // Initial schedule/score sync (seed from snapshot if ESPN is unreachable),
+  // then refresh hourly. Errors are logged, never fatal.
+  syncSchedule({ seedIfEmpty: true }).catch((e) => console.error('[sync] boot:', e.message));
+  setInterval(() => syncSchedule().catch((e) => console.error('[sync] hourly:', e.message)), 60 * 60 * 1000);
+});
