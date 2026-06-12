@@ -77,11 +77,14 @@ body {
 
 /* ---- forms ---- */
 label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
-input[type=text], input[type=number], select {
+input[type=text], input[type=number], input[type=tel], select, textarea {
   width: 100%; padding: 14px; border-radius: 12px; font-size: 16px;
   background: #0e1640; border: 1px solid var(--line); color: var(--txt); outline: none;
+  font-family: inherit; resize: vertical;
 }
-input:focus, select:focus { border-color: var(--accent); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+.link { color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: none; }
+.link:active { opacity: .7; }
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
 

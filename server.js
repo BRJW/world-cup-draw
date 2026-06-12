@@ -12,6 +12,11 @@ import {
 } from './lib/draw.js';
 import { teamByCode } from './data/teams.js';
 import { fetchAllMatches } from './lib/espn.js';
+import { sendSMS, sendMany, smsEnabled, normalizePhone } from './lib/sms.js';
+import { id as randId } from './lib/ids.js';
+
+const sixDigit = () => String(Math.floor(100000 + Math.random() * 900000));
+const appUrl = (req) => (process.env.APP_URL || `https://${req.get('host')}`).replace(/\/$/, '');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -39,6 +44,8 @@ const publicPlayer = (p) => p && ({
   id: p.id, name: p.name, isCommissioner: p.isCommissioner,
   teamName: p.teamName || null, image: p.image || null,
 });
+// Self view includes the owner's own phone (never broadcast in pool state).
+const selfPlayer = (p) => p && ({ ...publicPlayer(p), phone: p.phone || null });
 
 async function fullState(poolId) {
   const pool = await store.getPool(poolId);
@@ -75,11 +82,11 @@ async function requireCommissioner(token, poolId) {
 }
 
 // ---- routes ----------------------------------------------------------------
-app.get('/api/health', (req, res) => res.json({ ok: true, backend: store.backend }));
+app.get('/api/health', (req, res) => res.json({ ok: true, backend: store.backend, sms: smsEnabled() }));
 
 app.get('/api/teams', (req, res) => res.json({
   teams: TEAMS, maxPlayers: MAX_PLAYERS, roundCount: ROUND_COUNT,
-  teamsPerPlayer: TEAMS_PER_PLAYER, rounds: ROUND_INFO,
+  teamsPerPlayer: TEAMS_PER_PLAYER, rounds: ROUND_INFO, sms: smsEnabled(),
 }));
 
 // Create a pool (creator becomes commissioner)
@@ -132,10 +139,10 @@ app.get('/api/pools/:id', async (req, res) => {
 app.get('/api/me', async (req, res) => {
   const player = await store.getPlayerByToken(req.query.token);
   if (!player) return res.status(404).json({ error: 'unknown token' });
-  res.json({ player: publicPlayer(player), poolId: player.poolId });
+  res.json({ player: selfPlayer(player), poolId: player.poolId });
 });
 
-// Update your coach profile: club name + badge image (small data URL).
+// Update your coach profile: club name, badge image, phone (for text recovery).
 app.post('/api/players/me', async (req, res) => {
   const player = await store.getPlayerByToken(req.body?.token);
   if (!player) return res.status(403).json({ error: 'unknown token' });
@@ -153,9 +160,59 @@ app.post('/api/players/me', async (req, res) => {
       return res.status(400).json({ error: 'image must be a small jpeg/png/webp data URL' });
     }
   }
+  if ('phone' in req.body) {
+    const ph = req.body.phone;
+    if (ph === null || ph === '') fields.phone = null;
+    else {
+      const n = normalizePhone(ph);
+      if (!n) return res.status(400).json({ error: 'enter a valid phone number' });
+      fields.phone = n;
+    }
+  }
   const updated = await store.updatePlayer(player.id, fields);
   await broadcast(player.poolId);
-  res.json({ player: publicPlayer(updated || player) });
+  res.json({ player: selfPlayer(updated || player) });
+});
+
+// ---- text-message login / recovery -----------------------------------------
+// Request a login text: sends a tap-link + 6-digit code to a known phone.
+app.post('/api/auth/sms/request', async (req, res) => {
+  if (!smsEnabled()) return res.status(503).json({ error: "texting isn't set up yet" });
+  const phone = normalizePhone(req.body?.phone);
+  if (!phone) return res.status(400).json({ error: 'enter a valid phone number' });
+  const players = await store.getPlayersByPhone(phone);
+  if (players.length) {
+    const token = randId(20);
+    const code = sixDigit();
+    await store.createLoginRequest({ phone, code, token, ttlMs: 15 * 60 * 1000 });
+    const link = `${appUrl(req)}/login?t=${token}`;
+    await sendSMS(phone, `World Cup Pool: tap to get back in ${link} — or enter code ${code}. Expires in 15 min.`);
+  }
+  // Generic response — don't reveal whether the number is registered.
+  res.json({ ok: true });
+});
+
+// Verify a login (by tap-link token, or phone + code) -> returns memberships.
+app.post('/api/auth/sms/verify', async (req, res) => {
+  let lr;
+  if (req.body?.token) {
+    lr = await store.findLoginRequest({ token: req.body.token });
+    if (!lr) return res.status(400).json({ error: 'that link expired — request a new text' });
+  } else {
+    const phone = normalizePhone(req.body?.phone);
+    const code = String(req.body?.code || '').replace(/\D/g, '');
+    if (!phone || !code) return res.status(400).json({ error: 'enter your phone and the code' });
+    lr = await store.findLoginRequest({ phone, code });
+    if (!lr) return res.status(400).json({ error: 'wrong or expired code' });
+  }
+  await store.useLoginRequest(lr.token);
+  const players = await store.getPlayersByPhone(lr.phone);
+  const memberships = [];
+  for (const p of players) {
+    const pool = await store.getPool(p.poolId);
+    if (pool) memberships.push({ poolId: pool.id, code: pool.joinCode, name: pool.name, token: p.token, playerId: p.id });
+  }
+  res.json({ memberships });
 });
 
 // Set / shuffle the draft order (commissioner, during setup)
@@ -190,7 +247,31 @@ app.post('/api/pools/:id/start', async (req, res) => {
   }
   await store.updatePool(pool.id, { draftOrder: order, status: 'drafting', potIndex: 0, pickIndex: 0 });
   const state = await broadcast(pool.id, { event: 'draft-started' });
+  // Text everyone with a phone (except the commissioner kicking it off).
+  if (smsEnabled()) {
+    const link = `${appUrl(req)}/p/${pool.joinCode}`;
+    const targets = players.filter((p) => p.phone && p.id !== commissioner.id)
+      .map((p) => ({ to: p.phone, body: `🏆 The draft for “${pool.name}” is starting now! Watch live: ${link}` }));
+    if (targets.length) sendMany(targets).catch(() => {});
+  }
   res.json(state);
+});
+
+// Invite people by text (commissioner) — sends the join link to phone numbers.
+app.post('/api/pools/:id/invite', async (req, res) => {
+  if (!smsEnabled()) return res.status(503).json({ error: "texting isn't set up yet" });
+  const commissioner = await requireCommissioner(req.body?.token, req.params.id);
+  if (!commissioner) return res.status(403).json({ error: 'commissioner only' });
+  const pool = await store.getPool(req.params.id);
+  if (!pool) return res.status(404).json({ error: 'not found' });
+  const raw = Array.isArray(req.body?.phones) ? req.body.phones : String(req.body?.phones || '').split(/[,\n]+/);
+  const phones = [...new Set(raw.map(normalizePhone).filter(Boolean))];
+  if (!phones.length) return res.status(400).json({ error: 'add at least one valid phone number' });
+  const link = `${appUrl(req)}/p/${pool.joinCode}`;
+  const r = await sendMany(phones.map((to) => ({
+    to, body: `${commissioner.name} invited you to “${pool.name}” on World Cup Pool ⚽ Join: ${link}`,
+  })));
+  res.json({ sent: r.sent, total: r.total });
 });
 
 // Draw the next team (commissioner, or the player whose turn it is)
