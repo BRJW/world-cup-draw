@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=13';
+import { playAnnouncement } from '/announce.js?v=14';
 
 const $app = document.getElementById('app');
 
@@ -387,6 +387,7 @@ function renderForms() {
     ${hasPools ? '<button class="back-btn" data-action="go-dashboard">‹</button>' : '<span class="ball">⚽</span>'}
     <h1>World Cup Pool</h1>
   </div>
+  ${hasPools ? '' : '<p class="hero-tag">Draft the World Cup with your mates. <b>Winner takes all.</b></p>'}
   <div class="card">
     <div class="row" style="margin-bottom:16px">
       <button class="${create ? '' : 'secondary'}" data-action="mode" data-mode="create" style="margin:0">Create pool</button>
@@ -394,7 +395,7 @@ function renderForms() {
     </div>
     ${create ? `
       <h2>Start a new pool</h2>
-      <p class="sub">Up to 12 friends. 48 teams in 8 odds-based tiers, drafted in balanced pairs — every squad of four ends up equally weighted, so it comes down to who you back.</p>
+      <p class="sub">Up to 12 friends. 48 teams in 8 odds-based tiers, drafted in balanced pairs — every squad of four is equally weighted, so it comes down to who you back. Most points by the final wins it all.</p>
       <label>Pool name</label>
       <input type="text" id="pool-name" placeholder="The Lads' World Cup" maxlength="40" />
       <label>Your name (you'll be commissioner)</label>
@@ -632,7 +633,7 @@ function renderTeamsTab() {
   const sorted = [...mine].sort((a, b) => a.tier - b.tier);
   return club + `<div class="card">
     <h2>${esc(S.players.find((p) => p.id === S.me.id)?.teamName || `Your squad, ${S.me.name}`)}</h2>
-    <p class="sub">Four teams, balanced across the tiers. Win = 3 pts, draw = 1.</p>
+    <p class="sub">Four teams, balanced across the tiers. Every win banks 3 pts, a draw 1 — most points by the final takes the whole pool.</p>
     ${sorted.map((t) => {
       const r = t.record;
       const rec = r ? `${r.played}P · ${r.w}W ${r.d}D ${r.l}L · ${r.pts} pts` : 'No matches yet';
@@ -648,17 +649,20 @@ function renderTeamsTab() {
 
 // ---- Standings tab ----
 function renderStandingsTab() {
-  if (!S.leaderboard.length) return `<div class="card empty">Standings appear once the draft is done and scores are in.</div>`;
+  if (!S.leaderboard.length) return `<div class="card empty">Standings appear once the draft is done and the first scores are in.</div>`;
+  const leader = S.leaderboard[0];
+  const tie = S.leaderboard.filter((r) => r.pts === leader.pts).length > 1;
   return `<div class="card">
-    <h2>🏆 Standings</h2>
-    <p class="sub">Combined points of each player's four teams.</p>
+    <h2>Standings</h2>
+    <div class="wta-banner"><span class="trophy">🏆</span><span>Winner takes all — whoever's four teams bank the most points by the final lifts the trophy.</span></div>
     ${S.leaderboard.map((row, i) => {
       const pl = S.players.find((p) => p.id === row.playerId);
+      const isLeader = i === 0 && row.pts > 0 && !tie;
       return `
       <div class="lb-row ${i === 0 ? 'top1' : ''}">
-        <div class="lb-rank">${i + 1}</div>
+        <div class="lb-rank">${isLeader ? '👑' : i + 1}</div>
         ${avatar(pl)}
-        <div style="flex:1">
+        <div style="flex:1;min-width:0">
           <div class="lb-name">${esc(pl?.teamName || row.name)} ${row.playerId === S.me?.id ? '<span class="badge you">You</span>' : ''}</div>
           ${pl?.teamName ? `<div class="club-sub">${esc(row.name)}</div>` : ''}
           <div class="lb-teams">${row.teams.map((t) => t.flag).join(' ')}</div>
