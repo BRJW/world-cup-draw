@@ -6,14 +6,15 @@
   --line: #2d3f8f;
   --txt: #eef2ff;
   --muted: #9fb0e8;
-  --accent: #00e676;
-  --accent2: #ffd54f;
-  --danger: #ff5470;
+  --accent: #28bd88;
+  --accent-ink: #05241a;
+  --accent2: #e4be6a;
+  --danger: #e25a6e;
   --radius: 16px;
-  --pot1: #ffd54f;
-  --pot2: #4fc3f7;
-  --pot3: #ba68c8;
-  --pot4: #ff8a65;
+  --pot1: #e4be6a;
+  --pot2: #6fb8da;
+  --pot3: #a87fc4;
+  --pot4: #e0926f;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -87,7 +88,7 @@ input:focus, select:focus { border-color: var(--accent); }
 button {
   font: inherit; font-weight: 700; cursor: pointer; border: none;
   padding: 14px 18px; border-radius: 12px; width: 100%;
-  background: var(--accent); color: #04210f; font-size: 16px; margin-top: 14px;
+  background: var(--accent); color: var(--accent-ink); font-size: 16px; margin-top: 14px;
   transition: transform .06s ease, opacity .2s;
 }
 button:active { transform: scale(.98); }
@@ -113,7 +114,7 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
   display: flex; flex-direction: column; align-items: center; gap: 3px;
 }
 .tabs button .ico { font-size: 20px; }
-.tabs button.active { color: var(--accent); background: rgba(0,230,118,.08); }
+.tabs button.active { color: var(--accent); background: rgba(40,189,136,.12); }
 
 /* ---- player list / draft ---- */
 .player-row {
@@ -140,9 +141,9 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .player-row .name { font-weight: 700; flex: 1; }
 .player-row .meta { color: var(--muted); font-size: 12px; }
 .badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
-.badge.you { background: rgba(0,230,118,.15); color: var(--accent); }
-.badge.host { background: rgba(255,213,79,.15); color: var(--accent2); }
-.badge.turn { background: var(--accent); color: #04210f; }
+.badge.you { background: rgba(40,189,136,.16); color: var(--accent); }
+.badge.host { background: rgba(228,190,106,.16); color: var(--accent2); }
+.badge.turn { background: var(--accent); color: var(--accent-ink); }
 
 /* ---- pot pills ---- */
 .pot-pill { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; color: #0b1437; }
@@ -151,8 +152,8 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 
 /* ---- tier pills (8 tiers, gold -> grey) ---- */
 .tier-pill { font-size: 10px; font-weight: 800; padding: 3px 7px; border-radius: 6px; color: #0b1437; white-space: nowrap; }
-.tier-pill.t1 { background: #ffd54f; }
-.tier-pill.t2 { background: #ffca5a; }
+.tier-pill.t1 { background: #e4be6a; }
+.tier-pill.t2 { background: #e6c879; }
 .tier-pill.t3 { background: #b3e07a; }
 .tier-pill.t4 { background: #7fd6c2; }
 .tier-pill.t5 { background: #6fc3e8; }

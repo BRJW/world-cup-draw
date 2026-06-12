@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=10';
+import { playAnnouncement } from '/announce.js?v=11';
 
 const $app = document.getElementById('app');
 
@@ -249,7 +249,7 @@ function poolUrl(code) { return `${location.origin}/p/${code}`; }
 
 function renderDashboard() {
   const pools = S.myPools;
-  const header = `<div class="app-header"><span class="ball">⚽</span><h1>World Cup Draw</h1></div>`;
+  const header = `<div class="app-header"><span class="ball">⚽</span><h1>World Cup Pool</h1></div>`;
   if (pools === null) {
     return header + `<div class="card"><div class="empty">Loading your draws…</div></div>`;
   }
@@ -288,7 +288,7 @@ function renderDashboard() {
 }
 
 function renderNotFound() {
-  return `<div class="app-header"><span class="ball">⚽</span><h1>World Cup Draw</h1></div>
+  return `<div class="app-header"><span class="ball">⚽</span><h1>World Cup Pool</h1></div>
     <div class="card center">
       <div style="font-size:40px">🤔</div>
       <h2>Draw not found</h2>
@@ -322,7 +322,7 @@ function renderForms() {
   return `
   <div class="app-header">
     ${hasPools ? '<button class="back-btn" data-action="go-dashboard">‹</button>' : '<span class="ball">⚽</span>'}
-    <h1>World Cup Draw 2026</h1>
+    <h1>World Cup Pool</h1>
   </div>
   <div class="card">
     <div class="row" style="margin-bottom:16px">
