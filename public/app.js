@@ -342,7 +342,7 @@ function renderRecover() {
     <div class="card">
     ${sent ? `
       <h2>Check your email 📬</h2>
-      <p class="sub">We sent a magic link to <b>${esc(S.recoverEmail)}</b>. Tap it to get straight back into your draws — or enter the 6-digit code here.</p>
+      <p class="sub">If <b>${esc(S.recoverEmail)}</b> matches an email saved in a draw, a magic link is on its way — tap it, or enter the 6-digit code here. Nothing arriving? Check spam, and make sure it's the exact email you registered with.</p>
       <label>Code from the email</label>
       <input type="text" id="rec-code" inputmode="numeric" maxlength="6" placeholder="123456" style="letter-spacing:6px;font-weight:700;text-align:center" />
       <button data-action="recover-verify">Log in →</button>
@@ -479,7 +479,7 @@ function renderLobby() {
   <div class="card">
     ${isCommissioner() ? `
       <h2>Run the draft</h2>
-      <p class="sub">Order is randomized at kickoff (you can reshuffle). Four rounds: each player draws a headliner and a complementary balancer in each half of the field.</p>
+      <p class="sub">Order is randomized at kickoff (you can reshuffle). Four rounds, worst first: underdog → dark horse → contender → headliner. The giants land last.</p>
       <button class="secondary" data-action="shuffle-order">🔀 Shuffle draft order</button>
       <button data-action="start-draft" ${canStart ? '' : 'disabled'}>Start the live draw →</button>
       ${S.players.length < 2 ? '<p class="muted small center">Need at least 2 players to start.</p>' : ''}

@@ -205,7 +205,11 @@ app.post('/api/auth/email/request', async (req, res) => {
     const poolNames = [];
     for (const p of players) { const pool = await store.getPool(p.poolId); if (pool) poolNames.push(pool.name); }
     const { html, text } = magicLinkEmail({ link, code, poolNames: [...new Set(poolNames)] });
-    await sendEmail({ to: email, subject: 'Your World Cup Pool login link', html, text });
+    const r = await sendEmail({ to: email, subject: 'Your World Cup Pool login link', html, text });
+    console.log(`[auth] login link for ${email} (${players.length} membership${players.length === 1 ? '' : 's'}) ->`,
+      r.ok ? `sent ${r.id}` : `FAILED ${r.error || r.status || 'unknown'}`);
+  } else {
+    console.log(`[auth] login request for unregistered email ${email} — nothing sent`);
   }
   res.json({ ok: true }); // generic — don't reveal whether the email is known
 });

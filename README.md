@@ -64,12 +64,12 @@ Required env: `PORT` and `DATABASE_URL` come from Railway. Set `CRON_SECRET` on 
 
 So if you draw a **top-6** side you also get a **19–24** side (never a 13–18); a 7–12 side comes with a 13–18, and so on. Every player ends with four teams summing to tiers **5 + 13 = 18** — perfectly balanced.
 
-The draft runs in **4 snake-order rounds**:
+The draft runs in **4 snake-order rounds**, worst teams first so the giants land last:
 
-1. **Upper headliner** — a random team from Tier 1 ∪ Tier 2
-2. **Upper balancer** — its complement (Tier 1→4, Tier 2→3)
-3. **Lower pick** — a random team from Tier 5 ∪ Tier 6
-4. **Lower balancer** — its complement (Tier 5→8, Tier 6→7)
+1. **The Underdog** — a random team from Tier 7 ∪ Tier 8
+2. **The Dark Horse** — its complement (Tier 8→5, Tier 7→6)
+3. **The Contender** — a random team from Tier 3 ∪ Tier 4
+4. **The Headliner** — its complement (Tier 4→1, Tier 3→2)
 
 With 12 players the whole field is drafted; with fewer, the pairing still holds and the rest go undrafted.
 
