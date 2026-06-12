@@ -2,26 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flag previews — World Cup Draw</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1437" />
+  <title>Flag animations — World Cup Draw</title>
+  <link rel="stylesheet" href="/styles.css" />
   <style>
-    body { background: #0b1437; color: #eef2ff; font-family: -apple-system, system-ui, sans-serif; padding: 16px; }
-    h1 { font-size: 18px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
-    .cell { text-align: center; font-size: 12px; }
-    .cell svg { width: 100%; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.4); display: block; margin-bottom: 6px; }
-    .fl { /* no animation on the preview page */ }
+    .pv-head { padding: 18px 2px 4px; }
+    .pv-head h1 { font-size: 18px; margin: 0 0 6px; }
+    .pv-head p { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+    .pv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; padding-bottom: 40px; }
+    .pv-cell {
+      text-align: center; font-size: 12px; cursor: pointer; color: var(--txt);
+      opacity: 0; animation: fadeUp .45s ease both;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .pv-cell:active .pv-flag { transform: scale(.95); }
+    .pv-flag {
+      aspect-ratio: 3 / 2; border-radius: 10px; overflow: hidden; margin-bottom: 6px;
+      box-shadow: 0 6px 18px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.18);
+      transition: transform .15s ease; background: rgba(0,0,0,.25);
+    }
+    .pv-flag svg { width: 100%; height: 100%; display: block; }
+    .pv-cell .fl {
+      animation: flagLayerIn .55s cubic-bezier(.2,.85,.3,1.2) both;
+      transform-box: fill-box; transform-origin: center;
+    }
+    .pv-cell .nm { font-weight: 600; }
+    .pv-cell .od { color: var(--muted); font-size: 11px; }
   </style>
 </head>
 <body>
-  <h1>All 48 flags (tap a flag to replay its draw animation)</h1>
-  <div class="grid" id="grid"></div>
+  <div id="app">
+    <div class="pv-head">
+      <h1>⚽ All 48 flag animations</h1>
+      <p>Flags build in below. <b>Tap any flag</b> to play its full draw announcement.</p>
+      <button id="play-random" class="secondary" style="margin-top:0">🎲 Play a random one</button>
+    </div>
+    <div class="pv-grid" id="grid"></div>
+  </div>
   <script type="module">
     import { flagSVG } from '/flags.js';
+    import { playAnnouncement } from '/announce.js';
+
     const teams = await fetch('/api/teams').then((r) => r.json()).then((d) => d.teams);
-    document.getElementById('grid').innerHTML = teams.map((t) =>
-      `<div class="cell">${flagSVG(t.code, t)}<div>${t.flag} ${t.name}</div></div>`
-    ).join('');
+    const grid = document.getElementById('grid');
+
+    function renderGrid() {
+      grid.innerHTML = teams.map((t, i) =>
+        `<div class="pv-cell" data-code="${t.code}" style="animation-delay:${i * 45}ms">
+          <div class="pv-flag">${flagSVG(t.code, t)}</div>
+          <div class="nm">${t.flag} ${t.name}</div>
+          <div class="od">Tier ${t.tier} · ${t.odds}</div>
+        </div>`
+      ).join('');
+      // stagger each flag's layer-build after its cell appears
+      grid.querySelectorAll('.pv-cell').forEach((cell, i) => {
+        cell.querySelectorAll('.fl').forEach((l) => {
+          const base = parseFloat(l.style.animationDelay) || 0;
+          l.style.animationDelay = `${i * 45 + base}ms`;
+        });
+      });
+    }
+    renderGrid();
+
+    function demo(team) {
+      playAnnouncement({
+        team,
+        roundLabel: `PREVIEW · TIER ${team.tier}`,
+        coach: { name: 'You', teamName: 'Your Club FC' },
+      });
+    }
+
+    grid.addEventListener('click', (e) => {
+      const cell = e.target.closest('.pv-cell');
+      if (!cell) return;
+      demo(teams.find((t) => t.code === cell.dataset.code));
+    });
+    document.getElementById('play-random').addEventListener('click', () => {
+      demo(teams[Math.floor(Math.random() * teams.length)]);
+    });
   </script>
 </body>
 </html>

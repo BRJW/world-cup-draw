@@ -21,7 +21,10 @@ console.log(`[store] backend = ${store.backend}`);
 
 const app = express();
 app.use(express.json({ limit: '2mb' })); // room for coach badge uploads
-app.use(express.static(path.join(__dirname, 'public')));
+// no-cache: force revalidation (ETag 304s) so phones never run stale JS/CSS
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+}));
 
 const server = http.createServer(app);
 const io = new SocketServer(server);

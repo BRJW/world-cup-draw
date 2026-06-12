@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { flagSVG, flagPalette } from '/flags.js';
+import { playAnnouncement } from '/announce.js';
 
 const $app = document.getElementById('app');
 
@@ -536,109 +536,19 @@ function matchRow(m) {
 }
 
 // ---------------------------------------------------------------------------
-// Full-screen SVG country announcement
+// Full-screen SVG country announcement (shared module: /announce.js)
 // ---------------------------------------------------------------------------
-let announceTimers = [];
-const later = (fn, ms) => announceTimers.push(setTimeout(fn, ms));
-
-function coachLine(playerId) {
-  const p = S.players.find((x) => x.id === playerId);
-  if (!p) return '';
-  const av = p.image
-    ? `<img class="announce-coach-img" src="${p.image}" alt="" />`
-    : `<span class="announce-coach-init">${esc(initials(p.name))}</span>`;
-  const club = p.teamName ? ` · <i>${esc(p.teamName)}</i>` : '';
-  return `${av}<span>drafted by <b>${esc(p.name)}</b>${club}</span>`;
-}
-
 function animateReveal(pick) {
   const team = pick.team || teamByCode(pick.teamCode);
   render(); // refresh board/state underneath
   if (!team) { S.animating = false; return; }
   S.animating = true;
-
-  document.getElementById('announce')?.remove();
-  announceTimers.forEach(clearTimeout);
-  announceTimers = [];
-
   const ri = S.rounds[(pick.round || 1) - 1];
-  const el = document.createElement('div');
-  el.id = 'announce';
-  el.className = 'announce';
-  el.style.setProperty('--c1', team.color || '#1a2659');
-  el.style.setProperty('--c2', team.alt || '#0b1437');
-  el.innerHTML = `
-    <div class="announce-bg"></div>
-    <div class="announce-rays"></div>
-    <div class="announce-inner">
-      <div class="announce-round">${esc(ri ? ri.label : 'Pick')} · TIER ${team.tier}</div>
-      <div class="announce-stage">
-        <div class="announce-flagwrap" id="ann-flag"><div class="announce-dice">🎲</div></div>
-        <img class="announce-crest" id="ann-crest" alt="" />
-      </div>
-      <div class="announce-name" id="ann-name"><span class="drawing">Drawing<i>.</i><i>.</i><i>.</i></span></div>
-      <div class="announce-odds" id="ann-odds"></div>
-      <div class="announce-coach" id="ann-coach"></div>
-      <div class="announce-skip">tap anywhere to skip</div>
-    </div>
-    <div class="announce-confetti" id="ann-conf"></div>`;
-  el.addEventListener('click', finishAnnounce);
-  document.body.appendChild(el);
-
-  // Phase 2 — the reveal: flag builds layer by layer, crest drops, name slams.
-  later(() => {
-    const root = document.getElementById('announce');
-    if (!root) return;
-    root.classList.add('revealed');
-
-    const wrap = root.querySelector('#ann-flag');
-    wrap.innerHTML = flagSVG(team.code, team);
-
-    const crest = root.querySelector('#ann-crest');
-    crest.onload = () => crest.classList.add('show');
-    crest.onerror = () => crest.remove();
-    crest.src = team.crest || '';
-
-    const nameEl = root.querySelector('#ann-name');
-    nameEl.innerHTML = team.name.split('').map((ch, i) =>
-      `<span class="ltr" style="animation-delay:${380 + i * 26}ms">${ch === ' ' ? '&nbsp;' : esc(ch)}</span>`
-    ).join('');
-
-    later(() => { root.querySelector('#ann-odds').textContent = `${team.odds} to lift the trophy`; }, 650);
-    later(() => { root.querySelector('#ann-coach').innerHTML = coachLine(pick.playerId); }, 850);
-    later(() => burstConfetti(root.querySelector('#ann-conf'), flagPalette(team.code, team)), 420);
-    later(finishAnnounce, 3600);
-  }, 750);
-}
-
-function burstConfetti(box, colors) {
-  if (!box) return;
-  let html = '';
-  for (let i = 0; i < 44; i++) {
-    const c = colors[i % colors.length];
-    const tx = (Math.random() * 2 - 1) * 190;
-    const ty = -30 - Math.random() * 160;
-    const rot = (Math.random() * 2 - 1) * 540;
-    const dur = 1200 + Math.random() * 900;
-    const del = Math.random() * 180;
-    const sz = 5 + Math.random() * 7;
-    html += `<span class="cf" style="background:${c};width:${sz}px;height:${sz * (0.6 + Math.random())}px;` +
-      `--tx:${tx.toFixed(0)}px;--ty:${ty.toFixed(0)}px;--rot:${rot.toFixed(0)}deg;` +
-      `animation-duration:${dur.toFixed(0)}ms;animation-delay:${del.toFixed(0)}ms"></span>`;
-  }
-  box.innerHTML = html;
-}
-
-function finishAnnounce() {
-  announceTimers.forEach(clearTimeout);
-  announceTimers = [];
-  const el = document.getElementById('announce');
-  if (el) {
-    el.classList.add('out');
-    setTimeout(() => { el.remove(); S.animating = false; render(); }, 380);
-  } else {
-    S.animating = false; render();
-  }
+  const coach = S.players.find((p) => p.id === pick.playerId) || { name: playerName(pick.playerId) };
+  playAnnouncement(
+    { team, roundLabel: `${ri ? ri.label : 'Pick'} · TIER ${team.tier}`, coach },
+    () => { S.animating = false; render(); }
+  );
 }
 
 // ---------------------------------------------------------------------------

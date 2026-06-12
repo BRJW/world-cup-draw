@@ -261,12 +261,21 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 
 .announce-stage { position: relative; perspective: 900px; margin-bottom: 24px; }
 .announce-flagwrap {
+  position: relative;
   width: min(74vw, 330px); aspect-ratio: 3 / 2;
   border-radius: 14px; overflow: hidden; display: grid; place-items: center;
   box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 0 0 3px rgba(255,255,255,.55), 0 0 60px rgba(255,255,255,.18);
   background: rgba(0,0,0,.25);
   animation: flagFloat 4.5s ease-in-out infinite;
 }
+/* light sweep across the flag once it has assembled */
+.announce.revealed .announce-flagwrap::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 38%, rgba(255,255,255,.5) 50%, transparent 62%);
+  transform: translateX(-130%);
+  animation: flagShine 1s .75s ease both;
+}
+@keyframes flagShine { to { transform: translateX(130%); } }
 @keyframes flagFloat {
   0%, 100% { transform: rotateY(-4deg) rotateX(2deg); }
   50% { transform: rotateY(4deg) rotateX(-2deg); }
