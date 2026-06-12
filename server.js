@@ -20,7 +20,7 @@ const store = await createStore();
 console.log(`[store] backend = ${store.backend}`);
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '2mb' })); // room for coach badge uploads
 app.use(express.static(path.join(__dirname, 'public')));
 
 const server = http.createServer(app);
@@ -34,6 +34,7 @@ const publicPool = (p) => p && ({
 });
 const publicPlayer = (p) => p && ({
   id: p.id, name: p.name, isCommissioner: p.isCommissioner,
+  teamName: p.teamName || null, image: p.image || null,
 });
 
 async function fullState(poolId) {
@@ -129,6 +130,29 @@ app.get('/api/me', async (req, res) => {
   const player = await store.getPlayerByToken(req.query.token);
   if (!player) return res.status(404).json({ error: 'unknown token' });
   res.json({ player: publicPlayer(player), poolId: player.poolId });
+});
+
+// Update your coach profile: club name + badge image (small data URL).
+app.post('/api/players/me', async (req, res) => {
+  const player = await store.getPlayerByToken(req.body?.token);
+  if (!player) return res.status(403).json({ error: 'unknown token' });
+  const fields = {};
+  if ('teamName' in req.body) {
+    const tn = String(req.body.teamName || '').trim().slice(0, 30);
+    fields.teamName = tn || null;
+  }
+  if ('image' in req.body) {
+    const img = req.body.image;
+    if (img === null || img === '') fields.image = null;
+    else if (typeof img === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(img) && img.length <= 400_000) {
+      fields.image = img;
+    } else {
+      return res.status(400).json({ error: 'image must be a small jpeg/png/webp data URL' });
+    }
+  }
+  const updated = await store.updatePlayer(player.id, fields);
+  await broadcast(player.poolId);
+  res.json({ player: publicPlayer(updated || player) });
 });
 
 // Set / shuffle the draft order (commissioner, during setup)

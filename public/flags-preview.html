@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flag previews — World Cup Draw</title>
+  <style>
+    body { background: #0b1437; color: #eef2ff; font-family: -apple-system, system-ui, sans-serif; padding: 16px; }
+    h1 { font-size: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .cell { text-align: center; font-size: 12px; }
+    .cell svg { width: 100%; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.4); display: block; margin-bottom: 6px; }
+    .fl { /* no animation on the preview page */ }
+  </style>
+</head>
+<body>
+  <h1>All 48 flags (tap a flag to replay its draw animation)</h1>
+  <div class="grid" id="grid"></div>
+  <script type="module">
+    import { flagSVG } from '/flags.js';
+    const teams = await fetch('/api/teams').then((r) => r.json()).then((d) => d.teams);
+    document.getElementById('grid').innerHTML = teams.map((t) =>
+      `<div class="cell">${flagSVG(t.code, t)}<div>${t.flag} ${t.name}</div></div>`
+    ).join('');
+  </script>
+</body>
+</html>

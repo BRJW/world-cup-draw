@@ -1,6 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
+import { flagSVG, flagPalette } from '/flags.js';
+
 const $app = document.getElementById('app');
 
 // ---------------------------------------------------------------------------
@@ -27,6 +29,7 @@ const S = {
   scoreFilter: 'all',    // 'all' | 'mine'
   editMatchId: null,
   syncing: false,
+  pendingImage: null,    // resized badge waiting to be saved
   error: '',
   notice: '',
   prefillCode: '',
@@ -259,13 +262,18 @@ function renderLobby() {
   </div>`;
 }
 
+function avatar(pl) {
+  return pl?.image
+    ? `<img class="avatar avatar-img" src="${pl.image}" alt="" />`
+    : `<div class="avatar">${esc(initials(pl?.name || '?'))}</div>`;
+}
+
 function playerRow(pl) {
   const isMe = pl.id === S.me?.id;
   const isTurn = S.currentTurn?.playerId === pl.id;
-  const orderIdx = S.pool.draftOrder ? null : null;
   return `<div class="player-row">
-    <div class="avatar">${esc(initials(pl.name))}</div>
-    <div class="name">${esc(pl.name)}</div>
+    ${avatar(pl)}
+    <div class="name">${esc(pl.name)}${pl.teamName ? `<div class="club-sub">${esc(pl.teamName)}</div>` : ''}</div>
     ${pl.isCommissioner ? '<span class="badge host">Commish</span>' : ''}
     ${isMe ? '<span class="badge you">You</span>' : ''}
     ${isTurn ? '<span class="badge turn">Picking</span>' : ''}
@@ -352,8 +360,8 @@ function renderAllSquads() {
         .sort((a, b) => (a?.tier || 0) - (b?.tier || 0))
         .map((t) => t?.flag || '⚽').join(' ');
       return `<div class="player-row">
-        <div class="avatar">${esc(initials(pl.name))}</div>
-        <div class="name">${esc(pl.name)}</div>
+        ${avatar(pl)}
+        <div class="name">${esc(pl.name)}${pl.teamName ? `<div class="club-sub">${esc(pl.teamName)}</div>` : ''}</div>
         <div style="font-size:20px;letter-spacing:2px">${teams}</div>
       </div>`;
     }).join('')}
@@ -361,15 +369,38 @@ function renderAllSquads() {
 }
 
 // ---- My Teams tab ----
+function renderClubCard() {
+  const me = S.players.find((p) => p.id === S.me?.id) || S.me;
+  const preview = S.pendingImage || me?.image;
+  return `<div class="card">
+    <h2>Your club</h2>
+    <p class="sub">Name your team of teams and add a badge — it shows up in the draw and the standings.</p>
+    <div class="club-row">
+      ${preview ? `<img class="club-avatar" src="${preview}" alt="" />` : `<div class="club-avatar club-avatar-empty">${esc(initials(me?.name || '?'))}</div>`}
+      <div style="flex:1">
+        <label>Club name</label>
+        <input type="text" id="club-name" maxlength="30" placeholder="e.g. Buster's Galácticos" value="${esc(me?.teamName || '')}" />
+      </div>
+    </div>
+    <div class="row">
+      <button class="secondary" data-action="pick-badge">📷 ${preview ? 'Change badge' : 'Upload badge'}</button>
+      <button data-action="save-profile">Save</button>
+    </div>
+    <input type="file" id="club-file" accept="image/*" style="display:none" />
+    <div class="error">${esc(S.error)}</div>
+  </div>`;
+}
+
 function renderTeamsTab() {
   if (!S.me) return `<div class="card empty">Join a pool to see your teams.</div>`;
+  const club = renderClubCard();
   const mine = S.byPlayer[S.me.id] || S.picks.filter((p) => p.playerId === S.me.id).map((p) => ({ ...teamByCode(p.teamCode) }));
   if (!mine.length) {
-    return `<div class="card empty">You don't have any teams yet.<br/>They'll appear here once the draft runs.</div>`;
+    return club + `<div class="card empty">You don't have any teams yet.<br/>They'll appear here once the draft runs.</div>`;
   }
   const sorted = [...mine].sort((a, b) => a.tier - b.tier);
-  return `<div class="card">
-    <h2>Your squad, ${esc(S.me.name)}</h2>
+  return club + `<div class="card">
+    <h2>${esc(S.players.find((p) => p.id === S.me.id)?.teamName || `Your squad, ${S.me.name}`)}</h2>
     <p class="sub">Four teams, balanced across the tiers. Win = 3 pts, draw = 1.</p>
     ${sorted.map((t) => {
       const r = t.record;
@@ -390,16 +421,21 @@ function renderStandingsTab() {
   return `<div class="card">
     <h2>🏆 Standings</h2>
     <p class="sub">Combined points of each player's four teams.</p>
-    ${S.leaderboard.map((row, i) => `
+    ${S.leaderboard.map((row, i) => {
+      const pl = S.players.find((p) => p.id === row.playerId);
+      return `
       <div class="lb-row ${i === 0 ? 'top1' : ''}">
         <div class="lb-rank">${i + 1}</div>
-        <div>
-          <div class="lb-name">${esc(row.name)} ${row.playerId === S.me?.id ? '<span class="badge you">You</span>' : ''}</div>
+        ${avatar(pl)}
+        <div style="flex:1">
+          <div class="lb-name">${esc(pl?.teamName || row.name)} ${row.playerId === S.me?.id ? '<span class="badge you">You</span>' : ''}</div>
+          ${pl?.teamName ? `<div class="club-sub">${esc(row.name)}</div>` : ''}
           <div class="lb-teams">${row.teams.map((t) => t.flag).join(' ')}</div>
           <div class="lb-sub">${row.w}W ${row.d}D ${row.l}L · GF ${row.gf} / GA ${row.ga}</div>
         </div>
         <div class="lb-pts">${row.pts}<div class="lb-sub" style="text-align:right">pts</div></div>
-      </div>`).join('')}
+      </div>`;
+    }).join('')}
   </div>`;
 }
 
@@ -500,88 +536,106 @@ function matchRow(m) {
 }
 
 // ---------------------------------------------------------------------------
-// Full-screen themed country announcement
+// Full-screen SVG country announcement
 // ---------------------------------------------------------------------------
-// Pick a readable text colour for a given hex background.
-function readableOn(hex) {
-  const h = (hex || '').replace('#', '');
-  if (h.length < 6) return '#ffffff';
-  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
-  const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return lum > 0.6 ? '#0b1437' : '#ffffff';
+let announceTimers = [];
+const later = (fn, ms) => announceTimers.push(setTimeout(fn, ms));
+
+function coachLine(playerId) {
+  const p = S.players.find((x) => x.id === playerId);
+  if (!p) return '';
+  const av = p.image
+    ? `<img class="announce-coach-img" src="${p.image}" alt="" />`
+    : `<span class="announce-coach-init">${esc(initials(p.name))}</span>`;
+  const club = p.teamName ? ` · <i>${esc(p.teamName)}</i>` : '';
+  return `${av}<span>drafted by <b>${esc(p.name)}</b>${club}</span>`;
 }
 
-let announceTimer = null;
 function animateReveal(pick) {
   const team = pick.team || teamByCode(pick.teamCode);
   render(); // refresh board/state underneath
   if (!team) { S.animating = false; return; }
   S.animating = true;
 
-  // tear down any previous overlay
   document.getElementById('announce')?.remove();
-  clearTimeout(announceTimer);
+  announceTimers.forEach(clearTimeout);
+  announceTimers = [];
 
-  const drafter = playerName(pick.playerId);
   const ri = S.rounds[(pick.round || 1) - 1];
-  const txt = readableOn(team.color);
-  const spinPool = S.teams.filter((t) => t.tier === team.tier);
-
   const el = document.createElement('div');
   el.id = 'announce';
   el.className = 'announce';
   el.style.setProperty('--c1', team.color || '#1a2659');
   el.style.setProperty('--c2', team.alt || '#0b1437');
-  el.style.setProperty('--txt', txt);
   el.innerHTML = `
     <div class="announce-bg"></div>
+    <div class="announce-rays"></div>
     <div class="announce-inner">
-      <div class="announce-round">${esc(ri ? ri.label : 'Pick')} · Tier ${team.tier}</div>
-      <div class="announce-crest"><img id="announce-img" alt="" /></div>
-      <div class="announce-flag" id="announce-flag">🎲</div>
-      <div class="announce-name" id="announce-name">Drawing…</div>
-      <div class="announce-odds" id="announce-odds"></div>
-      <div class="announce-to" id="announce-to"></div>
-      <div class="announce-skip">tap to skip</div>
-    </div>`;
+      <div class="announce-round">${esc(ri ? ri.label : 'Pick')} · TIER ${team.tier}</div>
+      <div class="announce-stage">
+        <div class="announce-flagwrap" id="ann-flag"><div class="announce-dice">🎲</div></div>
+        <img class="announce-crest" id="ann-crest" alt="" />
+      </div>
+      <div class="announce-name" id="ann-name"><span class="drawing">Drawing<i>.</i><i>.</i><i>.</i></span></div>
+      <div class="announce-odds" id="ann-odds"></div>
+      <div class="announce-coach" id="ann-coach"></div>
+      <div class="announce-skip">tap anywhere to skip</div>
+    </div>
+    <div class="announce-confetti" id="ann-conf"></div>`;
   el.addEventListener('click', finishAnnounce);
   document.body.appendChild(el);
 
-  const flagEl = el.querySelector('#announce-flag');
-  const nameEl = el.querySelector('#announce-name');
-
-  // brief drumroll: spin flags from the same tier, then slam to the country
-  let ticks = 0;
-  const spin = setInterval(() => {
-    const r = spinPool[Math.floor(Math.random() * spinPool.length)];
-    flagEl.textContent = r.flag;
-    if (++ticks > 9) {
-      clearInterval(spin);
-      revealTeam(el, team, drafter);
-    }
-  }, 65);
-
-  function revealTeam(root, t, who) {
+  // Phase 2 — the reveal: flag builds layer by layer, crest drops, name slams.
+  later(() => {
+    const root = document.getElementById('announce');
+    if (!root) return;
     root.classList.add('revealed');
-    flagEl.textContent = t.flag;
-    flagEl.classList.add('pop');
-    nameEl.textContent = t.name;
-    root.querySelector('#announce-odds').textContent = `${t.odds} to win`;
-    root.querySelector('#announce-to').innerHTML = `drafted by <b>${esc(who)}</b>`;
-    const img = root.querySelector('#announce-img');
-    img.onload = () => img.classList.add('show');
-    img.onerror = () => { img.style.display = 'none'; flagEl.classList.add('big'); };
-    img.src = t.crest || '';
-    announceTimer = setTimeout(finishAnnounce, 2400);
+
+    const wrap = root.querySelector('#ann-flag');
+    wrap.innerHTML = flagSVG(team.code, team);
+
+    const crest = root.querySelector('#ann-crest');
+    crest.onload = () => crest.classList.add('show');
+    crest.onerror = () => crest.remove();
+    crest.src = team.crest || '';
+
+    const nameEl = root.querySelector('#ann-name');
+    nameEl.innerHTML = team.name.split('').map((ch, i) =>
+      `<span class="ltr" style="animation-delay:${380 + i * 26}ms">${ch === ' ' ? '&nbsp;' : esc(ch)}</span>`
+    ).join('');
+
+    later(() => { root.querySelector('#ann-odds').textContent = `${team.odds} to lift the trophy`; }, 650);
+    later(() => { root.querySelector('#ann-coach').innerHTML = coachLine(pick.playerId); }, 850);
+    later(() => burstConfetti(root.querySelector('#ann-conf'), flagPalette(team.code, team)), 420);
+    later(finishAnnounce, 3600);
+  }, 750);
+}
+
+function burstConfetti(box, colors) {
+  if (!box) return;
+  let html = '';
+  for (let i = 0; i < 44; i++) {
+    const c = colors[i % colors.length];
+    const tx = (Math.random() * 2 - 1) * 190;
+    const ty = -30 - Math.random() * 160;
+    const rot = (Math.random() * 2 - 1) * 540;
+    const dur = 1200 + Math.random() * 900;
+    const del = Math.random() * 180;
+    const sz = 5 + Math.random() * 7;
+    html += `<span class="cf" style="background:${c};width:${sz}px;height:${sz * (0.6 + Math.random())}px;` +
+      `--tx:${tx.toFixed(0)}px;--ty:${ty.toFixed(0)}px;--rot:${rot.toFixed(0)}deg;` +
+      `animation-duration:${dur.toFixed(0)}ms;animation-delay:${del.toFixed(0)}ms"></span>`;
   }
+  box.innerHTML = html;
 }
 
 function finishAnnounce() {
-  clearTimeout(announceTimer);
+  announceTimers.forEach(clearTimeout);
+  announceTimers = [];
   const el = document.getElementById('announce');
   if (el) {
     el.classList.add('out');
-    setTimeout(() => { el.remove(); S.animating = false; render(); }, 350);
+    setTimeout(() => { el.remove(); S.animating = false; render(); }, 380);
   } else {
     S.animating = false; render();
   }
@@ -669,7 +723,51 @@ const actions = {
       S.editMatchId = null; await refreshAux(); toast('Reverted to live feed'); render();
     } catch (e) { S.error = e.message; render(); }
   },
+
+  'pick-badge'() { document.getElementById('club-file')?.click(); },
+
+  async 'save-profile'() {
+    S.error = '';
+    const body = { token: S.token, teamName: val('club-name') };
+    if (S.pendingImage) body.image = S.pendingImage;
+    try {
+      const r = await api('/api/players/me', { method: 'POST', body });
+      S.me = { ...S.me, ...r.player };
+      S.pendingImage = null;
+      toast('Club saved'); render();
+    } catch (e) { S.error = e.message; render(); }
+  },
 };
+
+// Resize an uploaded badge to a small square JPEG before sending.
+async function resizeBadge(file, size = 160) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, err) => {
+      const i = new Image();
+      i.onload = () => ok(i); i.onerror = err; i.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const s = Math.min(img.width, img.height); // center-crop to square
+    ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+document.addEventListener('change', async (e) => {
+  if (e.target?.id !== 'club-file' || !e.target.files?.[0]) return;
+  try {
+    S.pendingImage = await resizeBadge(e.target.files[0]);
+    render();
+    toast('Badge ready — hit Save');
+  } catch {
+    S.error = "Couldn't read that image."; render();
+  }
+});
 
 function copy(text) {
   if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
