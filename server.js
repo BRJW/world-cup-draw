@@ -19,6 +19,43 @@ import { id as randId } from './lib/ids.js';
 const sixDigit = () => String(Math.floor(100000 + Math.random() * 900000));
 const appUrl = (req) => (process.env.APP_URL || `https://${req.get('host')}`).replace(/\/$/, '');
 
+// ---- remember-me: server-set HttpOnly cookie (survives localStorage eviction)
+const SESSION_COOKIE = 'wcp';
+const SESSION_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000; // ~browser maximum
+function parseCookies(req) {
+  const out = {};
+  const h = req.headers.cookie;
+  if (h) for (const part of h.split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+function setSessionCookie(req, res, id) {
+  const https = (req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http')) === 'https';
+  res.cookie(SESSION_COOKIE, id, {
+    maxAge: SESSION_MAX_AGE_MS, httpOnly: true, secure: https, sameSite: 'lax', path: '/',
+  });
+}
+// Ensure a session cookie exists (reuse or mint) and optionally bind a token.
+async function attachSession(req, res, token) {
+  const existing = parseCookies(req)[SESSION_COOKIE];
+  const sid = /^[a-f0-9]{16,}$/.test(existing || '') ? existing : randId(20);
+  setSessionCookie(req, res, sid);
+  if (token) await store.sessionAddToken(sid, token);
+  return sid;
+}
+async function membershipsForTokens(tokens) {
+  const out = [];
+  for (const tk of tokens) {
+    const p = await store.getPlayerByToken(tk);
+    if (!p) continue;
+    const pool = await store.getPool(p.poolId);
+    if (pool) out.push({ poolId: pool.id, code: pool.joinCode, name: pool.name, token: p.token, playerId: p.id });
+  }
+  return out;
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 
@@ -101,6 +138,7 @@ app.post('/api/pools', async (req, res) => {
   if (req.body?.email && !email) return res.status(400).json({ error: 'enter a valid email address' });
   const { pool, player } = await store.createPool({ name, commissionerName });
   if (email) await store.updatePlayer(player.id, { email });
+  await attachSession(req, res, player.token);
   res.json({
     pool: publicPool(pool),
     player: { ...selfPlayer({ ...player, email }), token: player.token },
@@ -135,6 +173,7 @@ app.post('/api/pools/:code/join', async (req, res) => {
     return res.status(409).json({ error: 'name already taken in this pool' });
   const player = await store.addPlayer(pool.id, name);
   if (email) await store.updatePlayer(player.id, { email });
+  await attachSession(req, res, player.token);
   await broadcast(pool.id);
   res.json({
     pool: publicPool(pool),
@@ -174,6 +213,7 @@ app.post('/api/pools/:code/claim', async (req, res) => {
   const fields = { placeholder: false };
   if (email) fields.email = email;
   const claimed = await store.updatePlayer(seat.id, fields);
+  await attachSession(req, res, claimed.token);
   await broadcast(pool.id);
   res.json({
     pool: publicPool(pool),
@@ -186,6 +226,26 @@ app.get('/api/pools/:id', async (req, res) => {
   const state = await fullState(req.params.id);
   if (!state) return res.status(404).json({ error: 'not found' });
   res.json(state);
+});
+
+// Remember-me: bind any known tokens to the cookie session and return ALL
+// memberships the cookie remembers (restores pools even if localStorage was
+// wiped by the browser, e.g. Safari's 7-day cap or an in-app browser).
+app.post('/api/session/sync', async (req, res) => {
+  const tokens = Array.isArray(req.body?.tokens) ? req.body.tokens.filter((t) => typeof t === 'string') : [];
+  const sid = await attachSession(req, res);
+  for (const tk of tokens) {
+    const p = await store.getPlayerByToken(tk);
+    if (p) await store.sessionAddToken(sid, tk);
+  }
+  res.json({ memberships: await membershipsForTokens(await store.sessionTokens(sid)) });
+});
+
+// Stop remembering a pool (when removed from the dashboard).
+app.post('/api/session/forget', async (req, res) => {
+  const sid = parseCookies(req)[SESSION_COOKIE];
+  if (sid && req.body?.token) await store.sessionRemoveToken(sid, req.body.token);
+  res.json({ ok: true });
 });
 
 // Resolve a saved token -> who am I / which pool
@@ -274,9 +334,13 @@ app.post('/api/auth/email/verify', async (req, res) => {
   await store.useLoginRequest(lr.token);
   const players = await store.getPlayersByEmail(lr.email);
   const memberships = [];
+  const sid = await attachSession(req, res);
   for (const p of players) {
     const pool = await store.getPool(p.poolId);
-    if (pool) memberships.push({ poolId: pool.id, code: pool.joinCode, name: pool.name, token: p.token, playerId: p.id });
+    if (pool) {
+      memberships.push({ poolId: pool.id, code: pool.joinCode, name: pool.name, token: p.token, playerId: p.id });
+      await store.sessionAddToken(sid, p.token);
+    }
   }
   res.json({ memberships });
 });

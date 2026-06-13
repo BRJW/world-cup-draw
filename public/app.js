@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=18';
+import { playAnnouncement } from '/announce.js?v=19';
 
 const $app = document.getElementById('app');
 
@@ -129,6 +129,13 @@ async function boot() {
     S.teams = t.teams; S.maxPlayers = t.maxPlayers;
     S.teamsPerPlayer = t.teamsPerPlayer || 4; S.rounds = t.rounds || [];
     S.sms = !!t.sms; S.email = !!t.email;
+  } catch { /* non-fatal */ }
+  // Remember-me: bind known tokens to the server cookie and pull back any pools
+  // the cookie remembers (restores them even if localStorage was wiped).
+  try {
+    const localTokens = Object.values(loadPools()).map((m) => m.token).filter(Boolean);
+    const s = await api('/api/session/sync', { method: 'POST', body: { tokens: localTokens } });
+    if (s.memberships?.length) storeMemberships(s.memberships);
   } catch { /* non-fatal */ }
   route();
 }
@@ -828,8 +835,11 @@ const actions = {
   'go-join'() { S.error = ''; S.homeMode = 'join'; S.prefillCode = ''; S.view = 'forms'; render(); },
   'open-pool'(el) { navigate(`/p/${el.dataset.code}`); },
   'remove-pool'(el) {
-    removePoolLocal(el.dataset.id);
-    S.myPools = (S.myPools || []).filter((p) => p.poolId !== el.dataset.id);
+    const id = el.dataset.id;
+    const tok = loadPools()[id]?.token;
+    removePoolLocal(id);
+    if (tok) api('/api/session/forget', { method: 'POST', body: { token: tok } }).catch(() => {});
+    S.myPools = (S.myPools || []).filter((p) => p.poolId !== id);
     render();
   },
 
