@@ -11,7 +11,7 @@ import {
   currentTurn, advance, randomTeamForTurn, leaderboard, teamsForPlayer,
 } from './lib/draw.js';
 import { teamByCode } from './data/teams.js';
-import { fetchAllMatches } from './lib/espn.js';
+import { fetchAllMatches, fetchMatchesAround } from './lib/espn.js';
 import { sendSMS, sendMany, smsEnabled, normalizePhone } from './lib/sms.js';
 import { sendEmail, sendMany as sendEmails, emailEnabled, normalizeEmail, magicLinkEmail } from './lib/email.js';
 import { id as randId } from './lib/ids.js';
@@ -638,14 +638,50 @@ async function syncSchedule({ seedIfEmpty = false } = {}) {
         return { updated: 0, source: 'none', lastSync };
       }
     }
-    for (const m of matches) {
-      try { await store.upsertMatchByExtId(m); }
-      catch (e) { console.error('[sync] upsert failed for', m.extId, e.message); }
-    }
-    lastSync = new Date().toISOString();
-    io.emit('matches-updated');
+    await applyMatches(matches);
     console.log(`[sync] ${matches.length} fixtures from ${source} at ${lastSync}`);
     return { updated: matches.length, source, lastSync };
+  } finally {
+    syncing = false;
+  }
+}
+
+// Upsert a batch, stamp lastSync, and notify clients.
+async function applyMatches(matches) {
+  for (const m of matches) {
+    try { await store.upsertMatchByExtId(m); }
+    catch (e) { console.error('[sync] upsert failed for', m.extId, e.message); }
+  }
+  lastSync = new Date().toISOString();
+  io.emit('matches-updated');
+  return matches.length;
+}
+
+// Is any match in play (or about to kick off)? Drives minute-by-minute polling.
+async function gamesInPlay() {
+  const now = Date.now();
+  const matches = await store.listMatches();
+  return matches.some((m) => {
+    if (m.status === 'in') return true; // live
+    if (m.status === 'pre' && m.kickoff) {
+      const t = new Date(m.kickoff).getTime();
+      return t <= now + 120000 && t >= now - 3 * 3600 * 1000; // kicking off soon / just did
+    }
+    return false;
+  });
+}
+
+// Light, fast sync of just the live window (today ±1) — used every minute while
+// a game is on, so scores land within ~60s instead of waiting for the hourly.
+async function syncLive() {
+  if (syncing) return;
+  syncing = true;
+  try {
+    const matches = await fetchMatchesAround().catch((e) => { console.error('[live] fetch:', e.message); return []; });
+    if (matches.length) {
+      const n = await applyMatches(matches);
+      console.log(`[live] synced ${n} fixtures (in-play window) at ${lastSync}`);
+    }
   } finally {
     syncing = false;
   }
@@ -701,9 +737,16 @@ server.listen(PORT, () => {
   console.log(`World Cup Draw listening on :${PORT}`);
   // Always sync once on boot (seed from snapshot if ESPN is unreachable).
   syncSchedule({ seedIfEmpty: true }).catch((e) => console.error('[sync] boot:', e.message));
-  // Self-heal backstop: keep an in-process hourly sync unless an external cron
-  // service owns scheduling (set SELF_SYNC=off on the web service then).
+  // Self-heal backstop: keep an in-process hourly full sweep (schedule + bracket)
+  // unless an external cron service owns scheduling (set SELF_SYNC=off then).
   if (process.env.SELF_SYNC !== 'off') {
     setInterval(() => syncSchedule().catch((e) => console.error('[sync] hourly:', e.message)), 60 * 60 * 1000);
   }
+  // Live polling: every minute, but only actually hit ESPN while a game is in
+  // play or about to start — so scores during a match update within ~60s.
+  setInterval(() => {
+    gamesInPlay()
+      .then((live) => (live ? syncLive() : null))
+      .catch((e) => console.error('[live] tick:', e.message));
+  }, 60 * 1000);
 });

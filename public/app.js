@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=20';
+import { playAnnouncement } from '/announce.js?v=21';
 
 const $app = document.getElementById('app');
 
@@ -713,10 +713,11 @@ function renderStandingsTab() {
 const myCodes = () => new Set(S.picks.filter((p) => p.playerId === S.me?.id).map((p) => p.teamCode));
 
 function syncLine() {
-  if (!S.lastSync) return 'Auto-updates hourly from ESPN';
+  const liveNow = S.matches.some((m) => m.status === 'in');
+  if (!S.lastSync) return 'Updates every minute during games';
   const mins = Math.round((Date.now() - new Date(S.lastSync)) / 60000);
   const ago = mins <= 0 ? 'just now' : mins === 1 ? '1 min ago' : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)}h ago`;
-  return `Auto-updates hourly · last synced ${ago}`;
+  return `${liveNow ? 'Updating live (every minute)' : 'Updates live during games · hourly otherwise'} · synced ${ago}`;
 }
 
 function renderScoresTab() {
