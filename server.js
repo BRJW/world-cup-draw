@@ -299,6 +299,67 @@ app.post('/api/auth/sms/request', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- admin: override a draft with a manually-conducted result --------------
+// Guarded by ADMIN_SECRET (header x-admin-key). Rewrites every pick.
+const tierToRound = (tier) => (tier >= 7 ? 1 : tier >= 5 ? 2 : tier >= 3 ? 3 : 4);
+
+app.post('/api/admin/pools/:code/override', async (req, res) => {
+  if (!process.env.ADMIN_SECRET || req.get('x-admin-key') !== process.env.ADMIN_SECRET) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  const pool = await store.getPoolByCode(req.params.code);
+  if (!pool) return res.status(404).json({ error: 'pool not found' });
+  const squads = Array.isArray(req.body?.squads) ? req.body.squads : null;
+  if (!squads) return res.status(400).json({ error: 'squads array required' });
+
+  const players = await store.getPlayers(pool.id);
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  const matchPlayer = (name) => {
+    const n = norm(name);
+    let m = players.filter((p) => norm(p.name) === n);
+    if (m.length !== 1) m = players.filter((p) => norm(p.name).startsWith(n) || norm(p.name).split(/\s+/)[0] === n);
+    if (m.length !== 1) m = players.filter((p) => norm(p.name).includes(n));
+    return m.length === 1 ? m[0] : null;
+  };
+
+  // Resolve + validate everything before touching the DB.
+  const resolved = [];
+  const usedCodes = new Set();
+  for (const squad of squads) {
+    const player = matchPlayer(squad.name);
+    if (!player) return res.status(400).json({ error: `no unique player match for "${squad.name}"` });
+    const teams = [];
+    for (const code of (squad.teams || [])) {
+      const t = teamByCode(code);
+      if (!t) return res.status(400).json({ error: `unknown team code "${code}" for ${squad.name}` });
+      if (usedCodes.has(t.code)) return res.status(400).json({ error: `team ${t.code} assigned twice` });
+      usedCodes.add(t.code);
+      teams.push(t);
+    }
+    resolved.push({ player, teams });
+  }
+
+  await store.clearPicks(pool.id);
+  let pickNumber = 0;
+  // insert round by round (worst tiers first) for tidy ordering
+  for (let round = 1; round <= ROUND_COUNT; round++) {
+    for (const { player, teams } of resolved) {
+      for (const t of teams) {
+        if (tierToRound(t.tier) !== round) continue;
+        pickNumber += 1;
+        await store.recordPick({ poolId: pool.id, playerId: player.id, teamCode: t.code, pot: round, pickNumber });
+      }
+    }
+  }
+  await store.updatePool(pool.id, {
+    status: 'done', potIndex: ROUND_COUNT, pickIndex: 0,
+    draftOrder: pool.draftOrder?.length ? pool.draftOrder : players.map((p) => p.id),
+  });
+  const state = await broadcast(pool.id, { event: 'draft-overridden' });
+  console.log(`[admin] overrode draft for ${pool.joinCode}: ${pickNumber} picks across ${resolved.length} squads`);
+  res.json({ ok: true, picks: pickNumber, squads: resolved.length, state });
+});
+
 // Verify a login (by tap-link token, or phone + code) -> returns memberships.
 app.post('/api/auth/sms/verify', async (req, res) => {
   let lr;
