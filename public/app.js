@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=19';
+import { playAnnouncement } from '/announce.js?v=20';
 
 const $app = document.getElementById('app');
 
@@ -766,6 +766,15 @@ function dispTeam(code, name) {
   return t ? { flag: t.flag, name: t.name, real: true } : { flag: '⬚', name: name || code, real: false };
 }
 
+// Which coach in THIS pool drafted a given country (for the "Ben vs Shiv" line).
+function ownerInfo(code) {
+  const pick = S.picks.find((p) => p.teamCode === code);
+  if (!pick) return null;
+  const pl = S.players.find((p) => p.id === pick.playerId);
+  if (!pl) return null;
+  return { name: pl.name.split(' ')[0], isMe: pl.id === S.me?.id };
+}
+
 function matchRow(m) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
   const editing = S.editMatchId === m.id;
@@ -795,12 +804,22 @@ function matchRow(m) {
       <button class="ghost btn-inline" data-action="cancel-edit">✕</button>
     </div>` : '';
 
+  const ownA = a.real ? ownerInfo(m.teamA) : null;
+  const ownB = b.real ? ownerInfo(m.teamB) : null;
+  const owner = (o) => o ? `<span class="ow ${o.isMe ? 'me' : ''}">${esc(o.name)}</span>` : '';
+  const ownersLine = (ownA || ownB) ? `<div class="match-owners">
+      <span class="t right">${owner(ownA)}</span>
+      <span class="ow-vs">vs</span>
+      <span class="t">${owner(ownB)}</span>
+    </div>` : '';
+
   return `<div class="match-row">
     <span class="t right">${esc(a.name)} ${a.flag}</span>
     ${mid}
     <span class="t">${b.flag} ${esc(b.name)}</span>
     ${editBtn}
   </div>
+  ${ownersLine}
   <div class="match-meta">${statusTag}${m.manual ? ' · <span class="manual-tag">manual</span>' : ''}</div>
   ${editor}`;
 }

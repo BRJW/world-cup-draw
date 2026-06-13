@@ -269,6 +269,12 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .match-row .sc { font-weight: 800; font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
 .match-row .sc.vs { color: var(--muted); font-weight: 600; font-size: 13px; }
 .match-row .sc.live { color: var(--live); }
+.match-owners { display: flex; align-items: center; gap: 8px; padding: 2px 0 0; font-size: 12px; }
+.match-owners .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-owners .t.right { text-align: right; }
+.match-owners .ow-vs { min-width: 52px; text-align: center; color: var(--muted2); font-size: 10px; font-weight: 600; }
+.match-owners .ow { color: var(--muted); font-weight: 600; }
+.match-owners .ow.me { color: var(--accent); }
 .match-meta { text-align: center; font-size: 11px; color: var(--muted); padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); display: flex; align-items: center; justify-content: center; gap: 5px; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--live); display: inline-block; animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
