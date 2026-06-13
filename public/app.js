@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=17';
+import { playAnnouncement } from '/announce.js?v=18';
 
 const $app = document.getElementById('app');
 
@@ -622,7 +622,8 @@ function renderAllSquads() {
 
 // ---- My Teams tab ----
 function renderClubCard() {
-  const me = S.players.find((p) => p.id === S.me?.id) || S.me;
+  // merge so self-only fields (email) are present alongside public ones (teamName/image)
+  const me = { ...(S.players.find((p) => p.id === S.me?.id) || {}), ...(S.me || {}) };
   const preview = S.pendingImage || me?.image;
   return `<div class="card">
     <h2>Your club</h2>
@@ -634,8 +635,13 @@ function renderClubCard() {
         <input type="text" id="club-name" maxlength="30" placeholder="e.g. Buster's Galácticos" value="${esc(me?.teamName || '')}" />
       </div>
     </div>
-    <label>Email ${me?.email ? '<span class="muted small">(saved ✓)</span>' : '<span class="muted small">— to log back in on a new device</span>'}</label>
-    <input type="text" id="club-email" inputmode="email" autocomplete="email" placeholder="you@example.com" value="${esc(me?.email || '')}" />
+    ${me?.email ? `
+      <label>Email <span class="muted small">— used to log back in</span></label>
+      <div class="readonly-field">${esc(me.email)}</div>
+    ` : `
+      <label>Email <span class="muted small">— add one to log back in on a new device</span></label>
+      <input type="text" id="club-email" inputmode="email" autocomplete="email" placeholder="you@example.com" />
+    `}
     <div class="row" style="margin-top:14px">
       <button class="secondary" data-action="pick-badge">📷 ${preview ? 'Change badge' : 'Upload badge'}</button>
       <button data-action="save-profile">Save</button>
