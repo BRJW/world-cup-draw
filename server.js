@@ -45,11 +45,18 @@ async function attachSession(req, res, token) {
   if (token) await store.sessionAddToken(sid, token);
   return sid;
 }
-async function membershipsForTokens(tokens) {
+// Resolve everything a cookie session remembers: pools via bound tokens AND via
+// any email it has seen (cookie -> email -> all that person's pools), minus any
+// the user explicitly removed.
+async function membershipsForSession(sid) {
+  const { tokens, emails, hidden } = await store.sessionData(sid);
+  const hide = new Set(hidden);
+  const byPlayer = new Map();
+  for (const tk of tokens) { const p = await store.getPlayerByToken(tk); if (p) byPlayer.set(p.id, p); }
+  for (const em of emails) { for (const p of await store.getPlayersByEmail(em)) byPlayer.set(p.id, p); }
   const out = [];
-  for (const tk of tokens) {
-    const p = await store.getPlayerByToken(tk);
-    if (!p) continue;
+  for (const p of byPlayer.values()) {
+    if (hide.has(p.poolId)) continue;
     const pool = await store.getPool(p.poolId);
     if (pool) out.push({ poolId: pool.id, code: pool.joinCode, name: pool.name, token: p.token, playerId: p.id });
   }
@@ -138,7 +145,8 @@ app.post('/api/pools', async (req, res) => {
   if (req.body?.email && !email) return res.status(400).json({ error: 'enter a valid email address' });
   const { pool, player } = await store.createPool({ name, commissionerName });
   if (email) await store.updatePlayer(player.id, { email });
-  await attachSession(req, res, player.token);
+  const sid = await attachSession(req, res, player.token);
+  if (email) await store.sessionAddEmail(sid, email);
   res.json({
     pool: publicPool(pool),
     player: { ...selfPlayer({ ...player, email }), token: player.token },
@@ -173,7 +181,8 @@ app.post('/api/pools/:code/join', async (req, res) => {
     return res.status(409).json({ error: 'name already taken in this pool' });
   const player = await store.addPlayer(pool.id, name);
   if (email) await store.updatePlayer(player.id, { email });
-  await attachSession(req, res, player.token);
+  const sid = await attachSession(req, res, player.token);
+  if (email) await store.sessionAddEmail(sid, email);
   await broadcast(pool.id);
   res.json({
     pool: publicPool(pool),
@@ -213,7 +222,8 @@ app.post('/api/pools/:code/claim', async (req, res) => {
   const fields = { placeholder: false };
   if (email) fields.email = email;
   const claimed = await store.updatePlayer(seat.id, fields);
-  await attachSession(req, res, claimed.token);
+  const sid = await attachSession(req, res, claimed.token);
+  if (claimed.email) await store.sessionAddEmail(sid, claimed.email);
   await broadcast(pool.id);
   res.json({
     pool: publicPool(pool),
@@ -236,15 +246,21 @@ app.post('/api/session/sync', async (req, res) => {
   const sid = await attachSession(req, res);
   for (const tk of tokens) {
     const p = await store.getPlayerByToken(tk);
-    if (p) await store.sessionAddToken(sid, tk);
+    if (p) { await store.sessionAddToken(sid, tk); if (p.email) await store.sessionAddEmail(sid, p.email); }
   }
-  res.json({ memberships: await membershipsForTokens(await store.sessionTokens(sid)) });
+  res.json({ memberships: await membershipsForSession(sid) });
 });
 
-// Stop remembering a pool (when removed from the dashboard).
+// Stop remembering a pool (when removed from the dashboard) — drop its token and
+// hide its pool so email-resolution doesn't bring it back.
 app.post('/api/session/forget', async (req, res) => {
   const sid = parseCookies(req)[SESSION_COOKIE];
-  if (sid && req.body?.token) await store.sessionRemoveToken(sid, req.body.token);
+  const token = req.body?.token;
+  if (sid && token) {
+    const p = await store.getPlayerByToken(token);
+    await store.sessionRemoveToken(sid, token);
+    if (p) await store.sessionHide(sid, p.poolId);
+  }
   res.json({ ok: true });
 });
 
@@ -292,6 +308,9 @@ app.post('/api/players/me', async (req, res) => {
     }
   }
   const updated = await store.updatePlayer(player.id, fields);
+  // keep the remember-me cookie in step with the player's identity
+  const sid = await attachSession(req, res, player.token);
+  if (fields.email) await store.sessionAddEmail(sid, fields.email);
   await broadcast(player.poolId);
   res.json({ player: selfPlayer(updated || player) });
 });
@@ -332,17 +351,9 @@ app.post('/api/auth/email/verify', async (req, res) => {
     if (!lr) return res.status(400).json({ error: 'wrong or expired code' });
   }
   await store.useLoginRequest(lr.token);
-  const players = await store.getPlayersByEmail(lr.email);
-  const memberships = [];
   const sid = await attachSession(req, res);
-  for (const p of players) {
-    const pool = await store.getPool(p.poolId);
-    if (pool) {
-      memberships.push({ poolId: pool.id, code: pool.joinCode, name: pool.name, token: p.token, playerId: p.id });
-      await store.sessionAddToken(sid, p.token);
-    }
-  }
-  res.json({ memberships });
+  await store.sessionAddEmail(sid, lr.email); // cookie now remembers this identity
+  res.json({ memberships: await membershipsForSession(sid) });
 });
 
 // ---- text-message login / recovery -----------------------------------------
