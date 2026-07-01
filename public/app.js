@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=24';
+import { playAnnouncement } from '/announce.js?v=25';
 
 const $app = document.getElementById('app');
 
@@ -878,9 +878,28 @@ function renderBracketTab() {
   ${third ? renderThirdPlaceNote(third) : ''}`;
 }
 
+// Tangential rotation for a label sitting at angle `aRad` (radians, 0 = 12
+// o'clock, clockwise) — reads like a clock numeral, following the ring's
+// curve, flipped 180° in the bottom half so it's never upside down.
+function tangentDeg(aRad) {
+  let deg = ((aRad * 180) / Math.PI) % 360;
+  if (deg > 90 && deg < 270) deg += 180;
+  return deg;
+}
+
+// A label that always fits its arc: compress (never stretch short text
+// oddly wide) via textLength/lengthAdjust only when the natural width would
+// overflow the available arc length, so neighbouring wedges never collide.
+function radialLabel(text, x, y, deg, availPx, fontSize, cls) {
+  const estWidth = text.length * fontSize * 0.56;
+  const constrain = estWidth > availPx ? ` textLength="${availPx.toFixed(1)}" lengthAdjust="spacingAndGlyphs"` : '';
+  return `<text class="${cls || ''}" x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="middle" dominant-baseline="central" `
+    + `font-size="${fontSize}" transform="rotate(${deg.toFixed(1)} ${x.toFixed(2)} ${y.toFixed(2)})"${constrain}>${esc(text)}</text>`;
+}
+
 function renderBracketWheel(ringStages, byStage, finalMatch) {
-  const SIZE = 340, CX = SIZE / 2, CY = SIZE / 2;
-  const OUTER_R = SIZE / 2 - 8, CENTER_R = 36;
+  const SIZE = 560, CX = SIZE / 2, CY = SIZE / 2;
+  const OUTER_R = SIZE / 2 - 14, CENTER_R = 62;
   const ringCount = Math.max(ringStages.length, 1);
   const thickness = (OUTER_R - CENTER_R) / ringCount;
 
@@ -898,7 +917,7 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
 
   const centerContent = finalMatch ? bracketCenter(finalMatch, CX, CY, CENTER_R) : `
     <circle cx="${CX}" cy="${CY}" r="${CENTER_R}" fill="var(--card2)" stroke="var(--line)" />
-    <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="18">🏆</text>`;
+    <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="22">🏆</text>`;
 
   return `<svg viewBox="0 0 ${SIZE} ${SIZE}" class="bracket-wheel" xmlns="http://www.w3.org/2000/svg">
     ${wedges}
@@ -908,21 +927,40 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
 
 function bracketWedge(m, cx, cy, rInner, rOuter, a0, a1) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const nameA = a.real ? a.name : shortenPlaceholder(a.name);
+  const nameB = b.real ? b.name : shortenPlaceholder(b.name);
   const { outA, outB, live } = bracketOutcome(m);
+  const ownA = a.real ? ownerInfo(m.teamA) : null;
+  const ownB = b.real ? ownerInfo(m.teamB) : null;
   const rMid = (rInner + rOuter) / 2;
   const aMid = (a0 + a1) / 2;
   const bandA = arcPath(cx, cy, rMid, rOuter, a0, a1);
   const bandB = arcPath(cx, cy, rInner, rMid, a0, a1);
-  const [fxA, fyA] = polar(cx, cy, (rMid + rOuter) / 2, aMid);
-  const [fxB, fyB] = polar(cx, cy, (rInner + rMid) / 2, aMid);
   const selected = m.id === bracketSelectedId;
-  const fontSize = a1 - a0 < 0.22 ? 9 : 12;
+  const deg = tangentDeg(aMid);
+  const availPx = Math.max(24, (a1 - a0) * rMid * 0.9);
+  const fontSize = a1 - a0 < 0.22 ? 10 : 13;
+  const coachFontSize = Math.max(7, fontSize - 3);
+
+  // Name line sits toward the outer 60% of its half-band, coach (if any)
+  // toward the inner 25% — both on the same tangential rotation, so a
+  // two-line label reads as a stack following the ring's curve.
+  const line = (r, txt, cls, size) => {
+    const [x, y] = polar(cx, cy, r, aMid);
+    return radialLabel(txt, x, y, deg, availPx, size, cls);
+  };
+  const bandLabels = (rBandInner, rBandOuter, name, out, own) => {
+    const rName = rBandInner + (rBandOuter - rBandInner) * (own ? 0.68 : 0.5);
+    let html = line(rName, name, out ? 'bwedge-out-text' : '', fontSize);
+    if (own) html += line(rBandInner + (rBandOuter - rBandInner) * 0.28, own.name, `bwedge-coach${own.isMe ? ' me' : ''}`, coachFontSize);
+    return html;
+  };
 
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     <path class="bwedge-band${outA ? ' bwedge-out' : ''}" d="${bandA}"></path>
     <path class="bwedge-band${outB ? ' bwedge-out' : ''}" d="${bandB}"></path>
-    <text class="${outA ? 'bwedge-out-text' : ''}" x="${fxA.toFixed(2)}" y="${fyA.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}">${a.flag}</text>
-    <text class="${outB ? 'bwedge-out-text' : ''}" x="${fxB.toFixed(2)}" y="${fyB.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}">${b.flag}</text>
+    ${bandLabels(rMid, rOuter, `${a.flag} ${nameA}`, outA, ownA)}
+    ${bandLabels(rInner, rMid, `${b.flag} ${nameB}`, outB, ownB)}
   </g>`;
 }
 
@@ -930,18 +968,22 @@ function bracketCenter(m, cx, cy, r) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
   const { outA, outB, final } = bracketOutcome(m);
   const selected = m.id === bracketSelectedId;
+  const avail = r * 1.5;
   if (final) {
     const champ = outA ? b : outB ? a : null;
     return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
       <circle cx="${cx}" cy="${cy}" r="${r}" class="bcenter-final"></circle>
-      <text x="${cx}" y="${cy - 6}" text-anchor="middle" font-size="20">${champ ? champ.flag : '🏆'}</text>
-      <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="8" class="bcenter-label">${champ ? 'CHAMPION' : 'FINAL'}</text>
+      <text x="${cx}" y="${cy - 14}" text-anchor="middle" font-size="22">${champ ? champ.flag : '🏆'}</text>
+      ${champ ? radialLabel(champ.name, cx, cy + 6, 0, avail, 13, 'bcenter-name') : ''}
+      <text x="${cx}" y="${cy + 22}" text-anchor="middle" font-size="9" class="bcenter-label">${champ ? 'CHAMPION' : 'FINAL'}</text>
     </g>`;
   }
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--card2)" stroke="var(--line)"></circle>
-    <text x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="15">${a.flag}${b.flag}</text>
-    <text x="${cx}" y="${cy + 13}" text-anchor="middle" font-size="8" class="bcenter-label">FINAL</text>
+    <text x="${cx}" y="${cy - 16}" text-anchor="middle" font-size="16">${a.flag}${b.flag}</text>
+    ${radialLabel(a.real ? a.name : shortenPlaceholder(a.name), cx, cy + 2, 0, avail, 11, outA ? 'bwedge-out-text' : '')}
+    ${radialLabel(b.real ? b.name : shortenPlaceholder(b.name), cx, cy + 16, 0, avail, 11, outB ? 'bwedge-out-text' : '')}
+    <text x="${cx}" y="${cy + 32}" text-anchor="middle" font-size="9" class="bcenter-label">FINAL</text>
   </g>`;
 }
 

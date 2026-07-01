@@ -289,18 +289,21 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .match-edit .btn-inline { margin: 0; }
 
 /* ---- bracket tab: radial knockout wheel + tap-to-expand detail card ---- */
-.bracket-wheel-card { display: flex; justify-content: center; padding: 16px; }
-.bracket-wheel { width: 100%; max-width: 380px; height: auto; touch-action: manipulation; }
+.bracket-wheel-card { display: flex; justify-content: center; padding: 12px 6px; }
+.bracket-wheel { width: 100%; height: auto; touch-action: manipulation; }
 .bwedge { cursor: pointer; }
 .bwedge-band { fill: var(--card2); stroke: var(--bg); stroke-width: 1.5; transition: fill .15s; }
 .bwedge:active .bwedge-band { fill: var(--card); }
 .bwedge-band.bwedge-out { fill: rgba(152,161,189,.08); }
 .bwedge-live .bwedge-band { fill: rgba(240,96,111,.16); }
 .bwedge-selected .bwedge-band { fill: rgba(233,196,106,.22); }
-.bwedge text { fill: var(--txt); pointer-events: none; }
+.bwedge text { fill: var(--txt); pointer-events: none; font-weight: 600; font-family: inherit; }
 .bwedge text.bwedge-out-text { opacity: .4; text-decoration: line-through; }
+.bwedge text.bwedge-coach { fill: var(--muted2); font-weight: 600; }
+.bwedge text.bwedge-coach.me { fill: var(--accent); }
 .bcenter-final { fill: rgba(233,196,106,.16); stroke: var(--accent); stroke-width: 2; }
 .bcenter-label { fill: var(--muted); font-weight: 800; letter-spacing: 1px; }
+.bcenter-name { fill: var(--txt); font-weight: 700; }
 .bwedge-selected .bcenter-label, .bwedge-selected text.bcenter-label { fill: var(--accent); }
 
 .bracket-detail { border: 1px solid rgba(233,196,106,.35); }
