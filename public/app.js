@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=25';
+import { playAnnouncement } from '/announce.js?v=26';
 
 const $app = document.getElementById('app');
 
@@ -804,16 +804,16 @@ function reconcileBracketOrder(byStage) {
 
 // ESPN's placeholder names ("Round of 32 8 Winner", "Quarterfinal 2 Winner")
 // are too long to show inline — shorten them to "R32 Match 8" / "QF Match 2".
+// ESPN's placeholder names repeat the source stage on every single wedge
+// ("Round of 32 8 Winner", "Round of 32 11 Winner", ...) — the ring itself
+// only ever references its own immediate previous round, so that's implied
+// by context. Drop it and just say "Match 8" (or "Match 2 (L)" for a
+// third-place loser reference) instead of saying the stage name over and
+// over across a whole ring.
 function shortenPlaceholder(name) {
-  let stage, num, kind;
-  let m = /^Round of (\d+)\s+(\d+)\s+(Winner|Loser)$/i.exec(name || '');
-  if (m) { stage = `R${m[1]}`; num = m[2]; kind = m[3]; }
-  else if ((m = /^Quarterfinal\s+(\d+)\s+(Winner|Loser)$/i.exec(name || ''))) { stage = 'QF'; num = m[1]; kind = m[2]; }
-  else if ((m = /^Semifinal\s+(\d+)\s+(Winner|Loser)$/i.exec(name || ''))) { stage = 'SF'; num = m[1]; kind = m[2]; }
-  else return name;
-  // "Winner" is the default assumption for anything still feeding the bracket,
-  // so only "Loser" (the third-place case) needs to be called out explicitly.
-  return `${stage} Match ${num}${/loser/i.test(kind) ? ' (L)' : ''}`;
+  const m = /^(?:Round of \d+|Quarterfinal|Semifinal)\s+(\d+)\s+(Winner|Loser)$/i.exec(name || '');
+  if (!m) return name;
+  return `Match ${m[1]}${/loser/i.test(m[2]) ? ' (L)' : ''}`;
 }
 
 // Which side of a decided match lost (for strikethrough/greying)? Returns
@@ -880,16 +880,30 @@ function renderBracketTab() {
 
 // Tangential rotation for a label sitting at angle `aRad` (radians, 0 = 12
 // o'clock, clockwise) — reads like a clock numeral, following the ring's
-// curve, flipped 180° in the bottom half so it's never upside down.
+// curve, flipped 180° in the bottom half so it's never upside down. Used
+// for the once-per-ring title sitting in the reserved top gap (angle 0),
+// where it works out to perfectly horizontal.
 function tangentDeg(aRad) {
   let deg = ((aRad * 180) / Math.PI) % 360;
   if (deg > 90 && deg < 270) deg += 180;
   return deg;
 }
 
-// A label that always fits its arc: compress (never stretch short text
-// oddly wide) via textLength/lengthAdjust only when the natural width would
-// overflow the available arc length, so neighbouring wedges never collide.
+// Radial rotation — the label's baseline points straight along the spoke
+// (like a wheel spoke / sunburst-chart leaf label) instead of curving with
+// the ring, so two teams can sit side by side in one ring without doubling
+// the wedge count. Flipped 180° on the left half so it's never upside down
+// (the standard convention for radial dendrogram labels).
+function radialDeg(aRad) {
+  let deg = ((aRad * 180) / Math.PI - 90) % 360;
+  if (deg < 0) deg += 360;
+  if (deg > 90 && deg < 270) deg += 180;
+  return deg % 360;
+}
+
+// A label that always fits its available space: compress (never stretch
+// short text oddly wide) via textLength/lengthAdjust only when the natural
+// size would overflow, so labels never collide.
 function radialLabel(text, x, y, deg, availPx, fontSize, cls) {
   const estWidth = text.length * fontSize * 0.56;
   const constrain = estWidth > availPx ? ` textLength="${availPx.toFixed(1)}" lengthAdjust="spacingAndGlyphs"` : '';
@@ -897,22 +911,40 @@ function radialLabel(text, x, y, deg, availPx, fontSize, cls) {
     + `font-size="${fontSize}" transform="rotate(${deg.toFixed(1)} ${x.toFixed(2)} ${y.toFixed(2)})"${constrain}>${esc(text)}</text>`;
 }
 
+const RING_TITLES = {
+  'Round of 32': 'ROUND OF 32', 'Round of 16': 'ROUND OF 16',
+  'Quarter-final': 'QUARTER-FINAL', 'Semi-final': 'SEMI-FINAL',
+};
+// A small gap reserved at the top of every ring for that ring's one-time
+// title label, so it never collides with a match wedge; matches fill the
+// remaining angular space evenly instead of the full circle.
+const WHEEL_GAP_RAD = (13 * Math.PI) / 180;
+const WHEEL_USABLE_RAD = TAU - WHEEL_GAP_RAD;
+const wheelAngleAt = (i, n) => WHEEL_GAP_RAD / 2 + (i / n) * WHEEL_USABLE_RAD;
+
 function renderBracketWheel(ringStages, byStage, finalMatch) {
-  const SIZE = 560, CX = SIZE / 2, CY = SIZE / 2;
-  const OUTER_R = SIZE / 2 - 14, CENTER_R = 62;
+  const SIZE = 620, CX = SIZE / 2, CY = SIZE / 2;
+  const OUTER_R = SIZE / 2 - 16, CENTER_R = 64;
   const ringCount = Math.max(ringStages.length, 1);
   const thickness = (OUTER_R - CENTER_R) / ringCount;
 
-  let wedges = '';
+  let wires = '', wedges = '', titles = '';
   ringStages.forEach((stage, ri) => {
     const matches = byStage[stage];
     const rOuter = OUTER_R - ri * thickness;
     const rInner = rOuter - thickness;
+    const nextROuter = ri + 1 < ringCount ? OUTER_R - (ri + 1) * thickness : CENTER_R;
     const n = matches.length;
     matches.forEach((m, i) => {
-      const a0 = (i / n) * TAU, a1 = ((i + 1) / n) * TAU;
+      const a0 = wheelAngleAt(i, n), a1 = wheelAngleAt(i + 1, n);
       wedges += bracketWedge(m, CX, CY, rInner, rOuter, a0, a1);
+      const aMid = (a0 + a1) / 2;
+      const [wx1, wy1] = polar(CX, CY, rInner, aMid);
+      const [wx2, wy2] = polar(CX, CY, nextROuter, aMid);
+      wires += `<line class="bwire" x1="${wx1.toFixed(2)}" y1="${wy1.toFixed(2)}" x2="${wx2.toFixed(2)}" y2="${wy2.toFixed(2)}"></line>`;
     });
+    const [tx, ty] = polar(CX, CY, (rInner + rOuter) / 2, 0);
+    titles += `<text class="bring-title" x="${tx.toFixed(2)}" y="${ty.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="9">${esc(RING_TITLES[stage] || stage)}</text>`;
   });
 
   const centerContent = finalMatch ? bracketCenter(finalMatch, CX, CY, CENTER_R) : `
@@ -920,11 +952,17 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
     <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="22">🏆</text>`;
 
   return `<svg viewBox="0 0 ${SIZE} ${SIZE}" class="bracket-wheel" xmlns="http://www.w3.org/2000/svg">
+    ${wires}
     ${wedges}
     ${centerContent}
+    ${titles}
   </svg>`;
 }
 
+// Each match splits its wedge into two side-by-side angular slices (not
+// radially stacked bands) so both teams get the FULL ring thickness to
+// write a name + coach along the spoke, instead of squeezing two teams'
+// worth of text into half the radial space each.
 function bracketWedge(m, cx, cy, rInner, rOuter, a0, a1) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
   const nameA = a.real ? a.name : shortenPlaceholder(a.name);
@@ -932,35 +970,34 @@ function bracketWedge(m, cx, cy, rInner, rOuter, a0, a1) {
   const { outA, outB, live } = bracketOutcome(m);
   const ownA = a.real ? ownerInfo(m.teamA) : null;
   const ownB = b.real ? ownerInfo(m.teamB) : null;
-  const rMid = (rInner + rOuter) / 2;
   const aMid = (a0 + a1) / 2;
-  const bandA = arcPath(cx, cy, rMid, rOuter, a0, a1);
-  const bandB = arcPath(cx, cy, rInner, rMid, a0, a1);
+  const sliceA = arcPath(cx, cy, rInner, rOuter, a0, aMid);
+  const sliceB = arcPath(cx, cy, rInner, rOuter, aMid, a1);
   const selected = m.id === bracketSelectedId;
-  const deg = tangentDeg(aMid);
-  const availPx = Math.max(24, (a1 - a0) * rMid * 0.9);
-  const fontSize = a1 - a0 < 0.22 ? 10 : 13;
-  const coachFontSize = Math.max(7, fontSize - 3);
 
-  // Name line sits toward the outer 60% of its half-band, coach (if any)
-  // toward the inner 25% — both on the same tangential rotation, so a
-  // two-line label reads as a stack following the ring's curve.
-  const line = (r, txt, cls, size) => {
-    const [x, y] = polar(cx, cy, r, aMid);
-    return radialLabel(txt, x, y, deg, availPx, size, cls);
-  };
-  const bandLabels = (rBandInner, rBandOuter, name, out, own) => {
-    const rName = rBandInner + (rBandOuter - rBandInner) * (own ? 0.68 : 0.5);
-    let html = line(rName, name, out ? 'bwedge-out-text' : '', fontSize);
-    if (own) html += line(rBandInner + (rBandOuter - rBandInner) * 0.28, own.name, `bwedge-coach${own.isMe ? ' me' : ''}`, coachFontSize);
+  const teamSpanRad = aMid - a0; // == a1 - aMid
+  const fontSize = Math.min(13, Math.max(8, teamSpanRad * ((rInner + rOuter) / 2) * 0.55));
+  const coachFontSize = Math.max(6.5, fontSize - 3);
+
+  const teamLabels = (slice0, slice1, name, out, own) => {
+    const mid = (slice0 + slice1) / 2;
+    const deg = radialDeg(mid);
+    const nameR = rInner + (rOuter - rInner) * (own ? 0.68 : 0.52);
+    const availLen = (rOuter - rInner) * (own ? 0.5 : 0.82);
+    const [nx, ny] = polar(cx, cy, nameR, mid);
+    let html = radialLabel(name, nx, ny, deg, availLen, fontSize, out ? 'bwedge-out-text' : '');
+    if (own) {
+      const [ox, oy] = polar(cx, cy, rInner + (rOuter - rInner) * 0.22, mid);
+      html += radialLabel(own.name, ox, oy, deg, (rOuter - rInner) * 0.36, coachFontSize, `bwedge-coach${own.isMe ? ' me' : ''}`);
+    }
     return html;
   };
 
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
-    <path class="bwedge-band${outA ? ' bwedge-out' : ''}" d="${bandA}"></path>
-    <path class="bwedge-band${outB ? ' bwedge-out' : ''}" d="${bandB}"></path>
-    ${bandLabels(rMid, rOuter, `${a.flag} ${nameA}`, outA, ownA)}
-    ${bandLabels(rInner, rMid, `${b.flag} ${nameB}`, outB, ownB)}
+    <path class="bwedge-band${outA ? ' bwedge-out' : ''}" d="${sliceA}"></path>
+    <path class="bwedge-band${outB ? ' bwedge-out' : ''}" d="${sliceB}"></path>
+    ${teamLabels(a0, aMid, `${a.flag} ${nameA}`, outA, ownA)}
+    ${teamLabels(aMid, a1, `${b.flag} ${nameB}`, outB, ownB)}
   </g>`;
 }
 

@@ -305,6 +305,8 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .bcenter-label { fill: var(--muted); font-weight: 800; letter-spacing: 1px; }
 .bcenter-name { fill: var(--txt); font-weight: 700; }
 .bwedge-selected .bcenter-label, .bwedge-selected text.bcenter-label { fill: var(--accent); }
+.bwire { stroke: var(--line); stroke-width: 1.5; opacity: .7; }
+.bring-title { fill: var(--accent); font-weight: 800; letter-spacing: .5px; opacity: .9; pointer-events: none; }
 
 .bracket-detail { border: 1px solid rgba(233,196,106,.35); }
 .bracket-match {

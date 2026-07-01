@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap" />
-  <link rel="stylesheet" href="/styles.css?v=25" />
+  <link rel="stylesheet" href="/styles.css?v=26" />
   <style>
     .pv-head { padding: 18px 2px 4px; }
     .pv-head h1 { font-size: 18px; margin: 0 0 6px; }
@@ -44,7 +44,7 @@
           '<pre style="white-space:pre-wrap;word-break:break-word;background:#0e1640;border:1px solid #2d3f8f;padding:12px;border-radius:10px;font-size:12px;color:#ffd54f">' +
           String(d || '').replace(/[<>&]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }) + '</pre>' +
           '<button onclick="location.reload(true)" style="margin-top:14px;padding:14px;border:0;border-radius:12px;background:#00e676;color:#04210f;font-weight:800;width:100%">Reload</button>' +
-          '<p style="color:#5a6aa0;font-size:11px;margin-top:12px">build v25 · ' + navigator.userAgent + '</p></div>';
+          '<p style="color:#5a6aa0;font-size:11px;margin-top:12px">build v26 · ' + navigator.userAgent + '</p></div>';
       }
       window.addEventListener('error', function (e) {
         if (e && e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK'))
@@ -67,8 +67,8 @@
     <div class="pv-grid" id="grid"><div class="loading" style="text-align:center;color:var(--muted);padding:40px">Loading flags…</div></div>
   </div>
   <script type="module">
-    import { flagSVG } from '/flags.js?v=25';
-    import { playAnnouncement } from '/announce.js?v=25';
+    import { flagSVG } from '/flags.js?v=26';
+    import { playAnnouncement } from '/announce.js?v=26';
 
     async function start() {
       const grid = document.getElementById('grid');
