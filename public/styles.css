@@ -288,20 +288,22 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .match-edit input { width: 56px; padding: 8px; text-align: center; }
 .match-edit .btn-inline { margin: 0; }
 
-/* ---- bracket tab: a real knockout tree, horizontally scrollable ---- */
-.bracket-wrap {
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
-  margin: 0 -16px 16px; padding: 4px 16px 16px;
-}
-.bracket { display: flex; align-items: stretch; }
-.bracket-round { display: flex; flex-direction: column; flex: none; width: 168px; padding: 0 10px; }
-.bracket-round-third { opacity: .8; }
-.bracket-round-title {
-  height: 34px; padding-top: 4px; box-sizing: border-box;
-  text-align: center; font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
-  color: var(--accent); line-height: 1.25; overflow: hidden;
-}
-.bracket-matches { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 10px; }
+/* ---- bracket tab: radial knockout wheel + tap-to-expand detail card ---- */
+.bracket-wheel-card { display: flex; justify-content: center; padding: 16px; }
+.bracket-wheel { width: 100%; max-width: 380px; height: auto; touch-action: manipulation; }
+.bwedge { cursor: pointer; }
+.bwedge-band { fill: var(--card2); stroke: var(--bg); stroke-width: 1.5; transition: fill .15s; }
+.bwedge:active .bwedge-band { fill: var(--card); }
+.bwedge-band.bwedge-out { fill: rgba(152,161,189,.08); }
+.bwedge-live .bwedge-band { fill: rgba(240,96,111,.16); }
+.bwedge-selected .bwedge-band { fill: rgba(233,196,106,.22); }
+.bwedge text { fill: var(--txt); pointer-events: none; }
+.bwedge text.bwedge-out-text { opacity: .4; text-decoration: line-through; }
+.bcenter-final { fill: rgba(233,196,106,.16); stroke: var(--accent); stroke-width: 2; }
+.bcenter-label { fill: var(--muted); font-weight: 800; letter-spacing: 1px; }
+.bwedge-selected .bcenter-label, .bwedge-selected text.bcenter-label { fill: var(--accent); }
+
+.bracket-detail { border: 1px solid rgba(233,196,106,.35); }
 .bracket-match {
   background: var(--card2); border: 1px solid var(--line); border-radius: 12px;
   padding: 8px 10px; box-shadow: 0 6px 16px -10px rgba(0,0,0,.7);
@@ -320,19 +322,10 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 }
 .bm-meta.live { color: var(--live); }
 
-/* connector column: one flex sibling per gap between two bracket rounds, drawing
-   an elbow per pair — a vertical spine at 50% width joining two entry stubs
-   (top/bottom), with a single exit stub continuing to the next round's match.
-   Percentages are relative to the column height, which flexbox stretches to
-   match every other round/connector, so the geometry lines up automatically. */
-.bracket-connector { flex: none; width: 26px; display: flex; flex-direction: column; }
-.bracket-connector-spacer { height: 34px; }
-.bracket-connector-body { flex: 1; position: relative; }
-.bconn { position: absolute; left: 0; width: 50%; border-right: 2px solid var(--line); }
-.bconn::before, .bconn::after { content: ''; position: absolute; left: 0; width: 100%; border-top: 2px solid var(--line); }
-.bconn::before { top: 0; }
-.bconn::after { bottom: 0; }
-.bconn-out { position: absolute; top: 50%; left: 50%; width: 50%; border-top: 2px solid var(--line); }
+.third-note { cursor: pointer; padding: 12px 16px; }
+.third-note-selected { border-color: rgba(233,196,106,.35); }
+.third-note-label { font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.third-note-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; }
 
 /* hero tagline on the entry screen */
 .hero-tag { text-align: center; color: var(--muted); font-size: 13px; margin: -4px 0 18px; }

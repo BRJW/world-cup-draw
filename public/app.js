@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=23';
+import { playAnnouncement } from '/announce.js?v=24';
 
 const $app = document.getElementById('app');
 
@@ -289,7 +289,6 @@ function render() {
   else html = renderDashboard();
   $app.innerHTML = html;
   if (S.view === 'pool' && S.tab === 'scores') scrollToUpcomingMatch();
-  if (S.view === 'pool' && S.tab === 'bracket') scrollToBracketRound();
 }
 
 // Scroll the Scores tab down to the first fixture that isn't finished yet —
@@ -736,15 +735,16 @@ function renderStandingsTab() {
 }
 
 // ---- Bracket tab ----
-// Visual column order (Third-place is a side-note, not part of the winners' line).
+// Which stages ever appear in the knockout data (Third-place is a side-note,
+// not part of the winners' line towards the trophy).
 const BRACKET_ORDER = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Final', 'Third-place'];
-// Only these connect to one another with bracket lines (each is exactly half
-// the matches of the previous one, so the flexbox stretch+space-around trick
-// lines a pair's midpoint up with the next round's match — see bracketConnectors).
+// The winners' line itself — each is exactly half the matches of the one
+// before it, which is what lets the radial wheel nest a pair of outer wedges
+// exactly under the inner wedge they feed (equal angular division per ring).
 const BRACKET_FLOW = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Final'];
 
-let bracketAutoScrolled = false; // reset whenever the Bracket tab is (re-)entered
-let bracketScrollTarget = null;  // stage name to scroll into view
+let bracketAutoSelected = false; // reset whenever the Bracket tab is (re-)entered
+let bracketSelectedId = null;    // id of the match shown in the detail panel
 
 const byKickoff = (a, b) => new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
 
@@ -802,61 +802,8 @@ function reconcileBracketOrder(byStage) {
   return ordered;
 }
 
-function renderBracketTab() {
-  const knockouts = S.matches.filter((m) => BRACKET_ORDER.includes(m.stage));
-  if (!knockouts.length) {
-    return `<div class="card empty">The bracket unlocks once the group stage wraps and the Round of 32 is set.</div>`;
-  }
-  const byStageRaw = {};
-  for (const m of knockouts) (byStageRaw[m.stage] ||= []).push(m);
-  const byStage = reconcileBracketOrder(byStageRaw);
-  if (byStageRaw['Third-place']) byStage['Third-place'] = [...byStageRaw['Third-place']].sort(byKickoff);
-
-  const stages = BRACKET_ORDER.filter((s) => byStage[s]?.length);
-  const flowStages = BRACKET_FLOW.filter((s) => byStage[s]?.length);
-  bracketScrollTarget = flowStages.find((s) => byStage[s].some((m) => !isMatchFinal(m))) || flowStages[flowStages.length - 1] || null;
-
-  let cols = '';
-  for (let i = 0; i < stages.length; i++) {
-    const stage = stages[i];
-    const matches = byStage[stage];
-    const third = stage === 'Third-place';
-    cols += `<div class="bracket-round${third ? ' bracket-round-third' : ''}" id="brnd-${esc(stage)}">
-      <div class="bracket-round-title">${third ? '🥉 3rd place' : esc(stage)}</div>
-      <div class="bracket-matches">${matches.map(bracketMatchCard).join('')}</div>
-    </div>`;
-    const next = stages[i + 1];
-    if (next && BRACKET_FLOW.includes(stage) && BRACKET_FLOW.includes(next)) {
-      cols += bracketConnectors(matches.length);
-    }
-  }
-  return `<div class="card">
-    <h2>Bracket</h2>
-    <p class="sub">The knockout tree — swipe sideways to see every round.</p>
-  </div>
-  <div class="bracket-wrap" id="bracket-scroll"><div class="bracket">${cols}</div></div>`;
-}
-
-// One elbow connector per pair of matches in the source round, positioned so
-// its vertical span runs exactly between that pair's centers (space-around
-// puts match i's center at (i+0.5)/N of the column height) — which lands
-// precisely on the next round's match center, since that round is stretched
-// to the same height and has exactly half as many matches.
-function bracketConnectors(sourceCount) {
-  const pairs = sourceCount / 2;
-  if (!Number.isInteger(pairs) || pairs < 1) return '';
-  let items = '';
-  for (let k = 0; k < pairs; k++) {
-    const top = ((2 * k + 0.5) / sourceCount) * 100;
-    const height = (1 / sourceCount) * 100;
-    items += `<div class="bconn" style="top:${top}%;height:${height}%"><div class="bconn-out"></div></div>`;
-  }
-  return `<div class="bracket-connector"><div class="bracket-connector-spacer"></div><div class="bracket-connector-body">${items}</div></div>`;
-}
-
 // ESPN's placeholder names ("Round of 32 8 Winner", "Quarterfinal 2 Winner")
-// are too long for a ~150px bracket card and get ellipsis-truncated mid-word —
-// shorten them to "R32 Match 8" / "QF Match 2" for the still-undecided side.
+// are too long to show inline — shorten them to "R32 Match 8" / "QF Match 2".
 function shortenPlaceholder(name) {
   let stage, num, kind;
   let m = /^Round of (\d+)\s+(\d+)\s+(Winner|Loser)$/i.exec(name || '');
@@ -869,12 +816,10 @@ function shortenPlaceholder(name) {
   return `${stage} Match ${num}${/loser/i.test(kind) ? ' (L)' : ''}`;
 }
 
-function bracketMatchCard(m) {
-  const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
-  const nameA = a.real ? a.name : shortenPlaceholder(a.name);
-  const nameB = b.real ? b.name : shortenPlaceholder(b.name);
+// Which side of a decided match lost (for strikethrough/greying)? Returns
+// {outA, outB} — both false while the match is still open or ambiguous.
+function bracketOutcome(m) {
   const hasScore = m.scoreA != null && m.scoreB != null;
-  const live = m.status === 'in';
   const final = isMatchFinal(m);
   let outA = false, outB = false;
   if (final && hasScore) {
@@ -883,46 +828,172 @@ function bracketMatchCard(m) {
     } else if (m.scoreA > m.scoreB) outB = true;
     else if (m.scoreB > m.scoreA) outA = true;
   }
+  return { outA, outB, final, live: m.status === 'in' };
+}
+
+const TAU = Math.PI * 2;
+const polar = (cx, cy, r, a) => [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+// Annulus-sector path: the standard donut/pie-slice wedge shape between two
+// radii and two angles (radians, 0 = 12 o'clock, clockwise).
+function arcPath(cx, cy, rInner, rOuter, a0, a1) {
+  const large = (a1 - a0) > Math.PI ? 1 : 0;
+  const [x1, y1] = polar(cx, cy, rOuter, a0), [x2, y2] = polar(cx, cy, rOuter, a1);
+  const [x3, y3] = polar(cx, cy, rInner, a1), [x4, y4] = polar(cx, cy, rInner, a0);
+  return `M${x1.toFixed(2)},${y1.toFixed(2)} A${rOuter.toFixed(2)},${rOuter.toFixed(2)} 0 ${large} 1 ${x2.toFixed(2)},${y2.toFixed(2)} `
+    + `L${x3.toFixed(2)},${y3.toFixed(2)} A${rInner.toFixed(2)},${rInner.toFixed(2)} 0 ${large} 0 ${x4.toFixed(2)},${y4.toFixed(2)} Z`;
+}
+
+function renderBracketTab() {
+  const knockouts = S.matches.filter((m) => BRACKET_ORDER.includes(m.stage));
+  if (!knockouts.length) {
+    return `<div class="card empty">The bracket unlocks once the group stage wraps and the Round of 32 is set.</div>`;
+  }
+  const byStageRaw = {};
+  for (const m of knockouts) (byStageRaw[m.stage] ||= []).push(m);
+  const byStage = reconcileBracketOrder(byStageRaw);
+  const third = byStageRaw['Third-place'] ? [...byStageRaw['Third-place']].sort(byKickoff)[0] : null;
+
+  // Rings run outer (Round of 32) -> inner; the Final sits in the centre
+  // bullseye instead of as a degenerate one-wedge ring.
+  const ringStages = BRACKET_FLOW.slice(0, -1).filter((s) => byStage[s]?.length);
+  const finalMatch = byStage['Final']?.[0] || null;
+
+  if (!bracketAutoSelected) {
+    bracketAutoSelected = true;
+    const allFlow = [...ringStages, ...(finalMatch ? ['Final'] : [])];
+    const targetStage = allFlow.find((s) => byStage[s].some((m) => !isMatchFinal(m))) || allFlow[allFlow.length - 1];
+    const pool = byStage[targetStage] || [];
+    bracketSelectedId = (pool.find((m) => !isMatchFinal(m)) || pool[pool.length - 1])?.id || null;
+  }
+
+  const svg = renderBracketWheel(ringStages, byStage, finalMatch);
+  const selected = knockouts.find((m) => m.id === bracketSelectedId);
+
+  return `<div class="card">
+    <h2>Bracket</h2>
+    <p class="sub">Tap any match on the wheel — outer ring is Round of 32, working in to the Final.</p>
+  </div>
+  <div class="card bracket-wheel-card">${svg}</div>
+  ${selected ? renderBracketDetail(selected) : ''}
+  ${third ? renderThirdPlaceNote(third) : ''}`;
+}
+
+function renderBracketWheel(ringStages, byStage, finalMatch) {
+  const SIZE = 340, CX = SIZE / 2, CY = SIZE / 2;
+  const OUTER_R = SIZE / 2 - 8, CENTER_R = 36;
+  const ringCount = Math.max(ringStages.length, 1);
+  const thickness = (OUTER_R - CENTER_R) / ringCount;
+
+  let wedges = '';
+  ringStages.forEach((stage, ri) => {
+    const matches = byStage[stage];
+    const rOuter = OUTER_R - ri * thickness;
+    const rInner = rOuter - thickness;
+    const n = matches.length;
+    matches.forEach((m, i) => {
+      const a0 = (i / n) * TAU, a1 = ((i + 1) / n) * TAU;
+      wedges += bracketWedge(m, CX, CY, rInner, rOuter, a0, a1);
+    });
+  });
+
+  const centerContent = finalMatch ? bracketCenter(finalMatch, CX, CY, CENTER_R) : `
+    <circle cx="${CX}" cy="${CY}" r="${CENTER_R}" fill="var(--card2)" stroke="var(--line)" />
+    <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="18">🏆</text>`;
+
+  return `<svg viewBox="0 0 ${SIZE} ${SIZE}" class="bracket-wheel" xmlns="http://www.w3.org/2000/svg">
+    ${wedges}
+    ${centerContent}
+  </svg>`;
+}
+
+function bracketWedge(m, cx, cy, rInner, rOuter, a0, a1) {
+  const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const { outA, outB, live } = bracketOutcome(m);
+  const rMid = (rInner + rOuter) / 2;
+  const aMid = (a0 + a1) / 2;
+  const bandA = arcPath(cx, cy, rMid, rOuter, a0, a1);
+  const bandB = arcPath(cx, cy, rInner, rMid, a0, a1);
+  const [fxA, fyA] = polar(cx, cy, (rMid + rOuter) / 2, aMid);
+  const [fxB, fyB] = polar(cx, cy, (rInner + rMid) / 2, aMid);
+  const selected = m.id === bracketSelectedId;
+  const fontSize = a1 - a0 < 0.22 ? 9 : 12;
+
+  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+    <path class="bwedge-band${outA ? ' bwedge-out' : ''}" d="${bandA}"></path>
+    <path class="bwedge-band${outB ? ' bwedge-out' : ''}" d="${bandB}"></path>
+    <text class="${outA ? 'bwedge-out-text' : ''}" x="${fxA.toFixed(2)}" y="${fyA.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}">${a.flag}</text>
+    <text class="${outB ? 'bwedge-out-text' : ''}" x="${fxB.toFixed(2)}" y="${fyB.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}">${b.flag}</text>
+  </g>`;
+}
+
+function bracketCenter(m, cx, cy, r) {
+  const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const { outA, outB, final } = bracketOutcome(m);
+  const selected = m.id === bracketSelectedId;
+  if (final) {
+    const champ = outA ? b : outB ? a : null;
+    return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+      <circle cx="${cx}" cy="${cy}" r="${r}" class="bcenter-final"></circle>
+      <text x="${cx}" y="${cy - 6}" text-anchor="middle" font-size="20">${champ ? champ.flag : '🏆'}</text>
+      <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="8" class="bcenter-label">${champ ? 'CHAMPION' : 'FINAL'}</text>
+    </g>`;
+  }
+  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--card2)" stroke="var(--line)"></circle>
+    <text x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="15">${a.flag}${b.flag}</text>
+    <text x="${cx}" y="${cy + 13}" text-anchor="middle" font-size="8" class="bcenter-label">FINAL</text>
+  </g>`;
+}
+
+function renderBracketDetail(m) {
+  const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const nameA = a.real ? a.name : shortenPlaceholder(a.name);
+  const nameB = b.real ? b.name : shortenPlaceholder(b.name);
+  const hasScore = m.scoreA != null && m.scoreB != null;
+  const { outA, outB, final, live } = bracketOutcome(m);
   const ownA = a.real ? ownerInfo(m.teamA) : null;
   const ownB = b.real ? ownerInfo(m.teamB) : null;
   const ownerLine = (o) => o ? `<div class="bm-owner ${o.isMe ? 'me' : ''}">${esc(o.name)}</div>` : '';
 
-  // statusDetail can still hold a stale "Scheduled"-type string from before a
-  // manual override marked the match final (status itself may still say
-  // 'pre') — only trust it once ESPN's own status has actually flipped.
   let meta = '';
   if (live) meta = `<div class="bm-meta live"><span class="live-dot"></span>${esc(m.statusDetail || 'LIVE')}</div>`;
   else if (final) {
     const label = m.shootout ? `Pens ${m.penA ?? '?'}-${m.penB ?? '?'}` : (m.status === 'post' && m.statusDetail ? m.statusDetail : 'FT');
     meta = `<div class="bm-meta">${esc(label)}</div>`;
-  } else if (m.kickoff) meta = `<div class="bm-meta">${esc(new Date(m.kickoff).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</div>`;
+  } else if (m.kickoff) meta = `<div class="bm-meta">${esc(new Date(m.kickoff).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }))}</div>`;
 
-  return `<div class="bracket-match">
-    <div class="bm-team ${outA ? 'bm-out' : ''}">
-      <span class="bm-flag">${a.flag}</span><span class="bm-name">${esc(nameA)}</span>
-      ${hasScore ? `<span class="bm-score">${esc(m.scoreA)}</span>` : ''}
+  return `<div class="card bracket-detail">
+    <h3 class="date-head">${esc(m.stage === 'Third-place' ? '🥉 Third place' : m.stage)}</h3>
+    <div class="bracket-match">
+      <div class="bm-team ${outA ? 'bm-out' : ''}">
+        <span class="bm-flag">${a.flag}</span><span class="bm-name">${esc(nameA)}</span>
+        ${hasScore ? `<span class="bm-score">${esc(m.scoreA)}</span>` : ''}
+      </div>
+      ${ownerLine(ownA)}
+      <div class="bm-team ${outB ? 'bm-out' : ''}">
+        <span class="bm-flag">${b.flag}</span><span class="bm-name">${esc(nameB)}</span>
+        ${hasScore ? `<span class="bm-score">${esc(m.scoreB)}</span>` : ''}
+      </div>
+      ${ownerLine(ownB)}
+      ${meta}
     </div>
-    ${ownerLine(ownA)}
-    <div class="bm-team ${outB ? 'bm-out' : ''}">
-      <span class="bm-flag">${b.flag}</span><span class="bm-name">${esc(nameB)}</span>
-      ${hasScore ? `<span class="bm-score">${esc(m.scoreB)}</span>` : ''}
-    </div>
-    ${ownerLine(ownB)}
-    ${meta}
   </div>`;
 }
 
-// Scroll the bracket strip so completed rounds are scrolled past and the
-// first round with something still to decide is in view — once per tab-entry.
-function scrollToBracketRound() {
-  if (bracketAutoScrolled || !bracketScrollTarget) return;
-  bracketAutoScrolled = true;
-  const stage = bracketScrollTarget;
-  requestAnimationFrame(() => {
-    const el = document.getElementById(`brnd-${stage}`);
-    const wrap = document.getElementById('bracket-scroll');
-    if (el && wrap) wrap.scrollLeft = Math.max(0, el.offsetLeft - 16);
-  });
+function renderThirdPlaceNote(m) {
+  const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const nameA = a.real ? a.name : shortenPlaceholder(a.name);
+  const nameB = b.real ? b.name : shortenPlaceholder(b.name);
+  const hasScore = m.scoreA != null && m.scoreB != null;
+  const selected = m.id === bracketSelectedId;
+  return `<div class="card third-note ${selected ? 'third-note-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+    <div class="third-note-label">🥉 Third place</div>
+    <div class="third-note-row">
+      <span>${a.flag} ${esc(nameA)}${hasScore ? ` <b>${esc(m.scoreA)}</b>` : ''}</span>
+      <span class="muted small">vs</span>
+      <span>${hasScore ? `<b>${esc(m.scoreB)}</b> ` : ''}${esc(nameB)} ${b.flag}</span>
+    </div>
+  </div>`;
 }
 
 // ---- Scores tab ----
@@ -1174,9 +1245,11 @@ const actions = {
 
   tab(el) {
     const next = el.dataset.tab;
-    if (next !== S.tab) { scoresAutoScrolled = false; bracketAutoScrolled = false; }
+    if (next !== S.tab) { scoresAutoScrolled = false; bracketAutoSelected = false; }
     S.tab = next; S.error = ''; refreshAux().then(render); render();
   },
+
+  'select-bracket-match'(el) { bracketSelectedId = el.dataset.id; render(); },
 
   'copy-code'() { copy(S.pool.joinCode); toast('Code copied'); },
   'copy-link'() { copy(poolUrl(S.pool.joinCode)); toast('Invite link copied'); },
