@@ -288,6 +288,52 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .match-edit input { width: 56px; padding: 8px; text-align: center; }
 .match-edit .btn-inline { margin: 0; }
 
+/* ---- bracket tab: a real knockout tree, horizontally scrollable ---- */
+.bracket-wrap {
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  margin: 0 -16px 16px; padding: 4px 16px 16px;
+}
+.bracket { display: flex; align-items: stretch; }
+.bracket-round { display: flex; flex-direction: column; flex: none; width: 168px; padding: 0 10px; }
+.bracket-round-third { opacity: .8; }
+.bracket-round-title {
+  height: 34px; padding-top: 4px; box-sizing: border-box;
+  text-align: center; font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+  color: var(--accent); line-height: 1.25; overflow: hidden;
+}
+.bracket-matches { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 10px; }
+.bracket-match {
+  background: var(--card2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 8px 10px; box-shadow: 0 6px 16px -10px rgba(0,0,0,.7);
+}
+.bm-team { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12.5px; font-weight: 600; }
+.bm-flag { font-size: 15px; flex: none; line-height: 1; }
+.bm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-score { font-weight: 800; font-variant-numeric: tabular-nums; flex: none; }
+.bm-team.bm-out { opacity: .45; }
+.bm-team.bm-out .bm-name { text-decoration: line-through; }
+.bm-owner { font-size: 10px; color: var(--muted2); padding-left: 21px; margin-top: -1px; }
+.bm-owner.me { color: var(--accent); font-weight: 700; }
+.bm-meta {
+  text-align: center; font-size: 9.5px; color: var(--muted); margin-top: 5px; padding-top: 5px;
+  border-top: 1px solid var(--line-soft); display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+.bm-meta.live { color: var(--live); }
+
+/* connector column: one flex sibling per gap between two bracket rounds, drawing
+   an elbow per pair — a vertical spine at 50% width joining two entry stubs
+   (top/bottom), with a single exit stub continuing to the next round's match.
+   Percentages are relative to the column height, which flexbox stretches to
+   match every other round/connector, so the geometry lines up automatically. */
+.bracket-connector { flex: none; width: 26px; display: flex; flex-direction: column; }
+.bracket-connector-spacer { height: 34px; }
+.bracket-connector-body { flex: 1; position: relative; }
+.bconn { position: absolute; left: 0; width: 50%; border-right: 2px solid var(--line); }
+.bconn::before, .bconn::after { content: ''; position: absolute; left: 0; width: 100%; border-top: 2px solid var(--line); }
+.bconn::before { top: 0; }
+.bconn::after { bottom: 0; }
+.bconn-out { position: absolute; top: 50%; left: 50%; width: 50%; border-top: 2px solid var(--line); }
+
 /* hero tagline on the entry screen */
 .hero-tag { text-align: center; color: var(--muted); font-size: 13px; margin: -4px 0 18px; }
 .hero-tag b { color: var(--accent); font-weight: 700; }

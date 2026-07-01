@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=22';
+import { playAnnouncement } from '/announce.js?v=23';
 
 const $app = document.getElementById('app');
 
@@ -264,6 +264,9 @@ const playerName = (id) => S.players.find((p) => p.id === id)?.name || '—';
 const teamByCode = (code) => S.teams.find((t) => t.code === code);
 const isCommissioner = () => !!S.me?.isCommissioner;
 const takenCodes = () => new Set(S.picks.map((p) => p.teamCode));
+// Mirrors lib/draw.js's isFinal() — a manual commissioner override (manual:true)
+// counts as final even if ESPN's own status field hasn't flipped to 'post' yet.
+const isMatchFinal = (m) => m.status !== 'in' && !!(m.completed || m.manual || m.status === 'post');
 
 function toast(msg) {
   const t = document.createElement('div');
@@ -286,6 +289,7 @@ function render() {
   else html = renderDashboard();
   $app.innerHTML = html;
   if (S.view === 'pool' && S.tab === 'scores') scrollToUpcomingMatch();
+  if (S.view === 'pool' && S.tab === 'bracket') scrollToBracketRound();
 }
 
 // Scroll the Scores tab down to the first fixture that isn't finished yet —
@@ -732,27 +736,146 @@ function renderStandingsTab() {
 }
 
 // ---- Bracket tab ----
-const KNOCKOUT_STAGES = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Third-place', 'Final'];
+// Visual column order (Third-place is a side-note, not part of the winners' line).
+const BRACKET_ORDER = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Final', 'Third-place'];
+// Only these connect to one another with bracket lines (each is exactly half
+// the matches of the previous one, so the flexbox stretch+space-around trick
+// lines a pair's midpoint up with the next round's match — see bracketConnectors).
+const BRACKET_FLOW = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Final'];
+
+let bracketAutoScrolled = false; // reset whenever the Bracket tab is (re-)entered
+let bracketScrollTarget = null;  // stage name to scroll into view
+
+const byKickoff = (a, b) => new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
+
+// Which 2 matches in `src` feed match `m`? A resolved side matches by its real
+// team code; an unresolved side is a ESPN placeholder like "Round of 32 8
+// Winner" / "Quarterfinal 2 Winner" — the trailing number is a stable 1-based
+// reference into `src`'s own canonical order (see reconcileBracketOrder).
+function bracketSourceIndices(m, src) {
+  const idxs = new Set();
+  for (const [code, name] of [[m.teamA, m.teamAName], [m.teamB, m.teamBName]]) {
+    const bySame = src.findIndex((s) => s.teamA === code || s.teamB === code);
+    if (bySame >= 0) { idxs.add(bySame); continue; }
+    const mm = /(\d+)\s*winner\s*$/i.exec(name || '');
+    if (mm) idxs.add(Number(mm[1]) - 1);
+  }
+  return [...idxs];
+}
+
+// Reorders every round so that real bracket pairs sit adjacent to one another
+// (rather than just chronological kickoff order), which is what lets the
+// connector math below draw lines that actually mean something. Falls back to
+// plain kickoff order for a stage-pair whenever reconciliation can't cleanly
+// account for every match (e.g. incomplete data) — connectors just won't be
+// drawn between those two columns in that case.
+function reconcileBracketOrder(byStage) {
+  const ordered = { 'Round of 32': [...(byStage['Round of 32'] || [])].sort(byKickoff) };
+  for (let i = 1; i < BRACKET_FLOW.length; i++) {
+    const srcStage = BRACKET_FLOW[i - 1], curStage = BRACKET_FLOW[i];
+    const src = ordered[srcStage] || [];
+    const curRaw = byStage[curStage] ? [...byStage[curStage]].sort(byKickoff) : [];
+    if (!curRaw.length) continue;
+
+    const used = new Set();
+    const known = [], unknown = [];
+    for (const m of curRaw) {
+      const idxs = bracketSourceIndices(m, src).filter((i) => !used.has(i));
+      if (idxs.length === 2) {
+        idxs.sort((a, b) => a - b);
+        used.add(idxs[0]); used.add(idxs[1]);
+        known.push({ m, lo: idxs[0], hi: idxs[1] });
+      } else unknown.push(m);
+    }
+    known.sort((a, b) => a.lo - b.lo);
+
+    const newSrc = [], newCur = [];
+    for (const kp of known) { newSrc.push(src[kp.lo], src[kp.hi]); newCur.push(kp.m); }
+    const leftover = src.filter((_, si) => !used.has(si));
+    for (let k = 0; k < leftover.length; k += 2) newSrc.push(leftover[k], leftover[k + 1]);
+    newCur.push(...unknown);
+
+    const cleanSrc = newSrc.filter(Boolean);
+    if (cleanSrc.length === src.length) { ordered[srcStage] = cleanSrc; ordered[curStage] = newCur; }
+    else { ordered[srcStage] = src; ordered[curStage] = curRaw; } // couldn't fully reconcile -- keep kickoff order
+  }
+  return ordered;
+}
 
 function renderBracketTab() {
-  const knockouts = S.matches.filter((m) => KNOCKOUT_STAGES.includes(m.stage));
+  const knockouts = S.matches.filter((m) => BRACKET_ORDER.includes(m.stage));
   if (!knockouts.length) {
     return `<div class="card empty">The bracket unlocks once the group stage wraps and the Round of 32 is set.</div>`;
   }
-  const byStage = {};
-  for (const m of knockouts) (byStage[m.stage] ||= []).push(m);
-  return KNOCKOUT_STAGES.filter((s) => byStage[s]?.length).map((stage) => `
-    <div class="card">
-      <h3 class="date-head">${esc(stage)}</h3>
-      ${byStage[stage].map(bracketRow).join('')}
-    </div>`).join('');
+  const byStageRaw = {};
+  for (const m of knockouts) (byStageRaw[m.stage] ||= []).push(m);
+  const byStage = reconcileBracketOrder(byStageRaw);
+  if (byStageRaw['Third-place']) byStage['Third-place'] = [...byStageRaw['Third-place']].sort(byKickoff);
+
+  const stages = BRACKET_ORDER.filter((s) => byStage[s]?.length);
+  const flowStages = BRACKET_FLOW.filter((s) => byStage[s]?.length);
+  bracketScrollTarget = flowStages.find((s) => byStage[s].some((m) => !isMatchFinal(m))) || flowStages[flowStages.length - 1] || null;
+
+  let cols = '';
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i];
+    const matches = byStage[stage];
+    const third = stage === 'Third-place';
+    cols += `<div class="bracket-round${third ? ' bracket-round-third' : ''}" id="brnd-${esc(stage)}">
+      <div class="bracket-round-title">${third ? '🥉 3rd place' : esc(stage)}</div>
+      <div class="bracket-matches">${matches.map(bracketMatchCard).join('')}</div>
+    </div>`;
+    const next = stages[i + 1];
+    if (next && BRACKET_FLOW.includes(stage) && BRACKET_FLOW.includes(next)) {
+      cols += bracketConnectors(matches.length);
+    }
+  }
+  return `<div class="card">
+    <h2>Bracket</h2>
+    <p class="sub">The knockout tree — swipe sideways to see every round.</p>
+  </div>
+  <div class="bracket-wrap" id="bracket-scroll"><div class="bracket">${cols}</div></div>`;
 }
 
-function bracketRow(m) {
+// One elbow connector per pair of matches in the source round, positioned so
+// its vertical span runs exactly between that pair's centers (space-around
+// puts match i's center at (i+0.5)/N of the column height) — which lands
+// precisely on the next round's match center, since that round is stretched
+// to the same height and has exactly half as many matches.
+function bracketConnectors(sourceCount) {
+  const pairs = sourceCount / 2;
+  if (!Number.isInteger(pairs) || pairs < 1) return '';
+  let items = '';
+  for (let k = 0; k < pairs; k++) {
+    const top = ((2 * k + 0.5) / sourceCount) * 100;
+    const height = (1 / sourceCount) * 100;
+    items += `<div class="bconn" style="top:${top}%;height:${height}%"><div class="bconn-out"></div></div>`;
+  }
+  return `<div class="bracket-connector"><div class="bracket-connector-spacer"></div><div class="bracket-connector-body">${items}</div></div>`;
+}
+
+// ESPN's placeholder names ("Round of 32 8 Winner", "Quarterfinal 2 Winner")
+// are too long for a ~150px bracket card and get ellipsis-truncated mid-word —
+// shorten them to "R32 Match 8" / "QF Match 2" for the still-undecided side.
+function shortenPlaceholder(name) {
+  let stage, num, kind;
+  let m = /^Round of (\d+)\s+(\d+)\s+(Winner|Loser)$/i.exec(name || '');
+  if (m) { stage = `R${m[1]}`; num = m[2]; kind = m[3]; }
+  else if ((m = /^Quarterfinal\s+(\d+)\s+(Winner|Loser)$/i.exec(name || ''))) { stage = 'QF'; num = m[1]; kind = m[2]; }
+  else if ((m = /^Semifinal\s+(\d+)\s+(Winner|Loser)$/i.exec(name || ''))) { stage = 'SF'; num = m[1]; kind = m[2]; }
+  else return name;
+  // "Winner" is the default assumption for anything still feeding the bracket,
+  // so only "Loser" (the third-place case) needs to be called out explicitly.
+  return `${stage} Match ${num}${/loser/i.test(kind) ? ' (L)' : ''}`;
+}
+
+function bracketMatchCard(m) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const nameA = a.real ? a.name : shortenPlaceholder(a.name);
+  const nameB = b.real ? b.name : shortenPlaceholder(b.name);
   const hasScore = m.scoreA != null && m.scoreB != null;
   const live = m.status === 'in';
-  const final = m.status === 'post';
+  const final = isMatchFinal(m);
   let outA = false, outB = false;
   if (final && hasScore) {
     if (m.scoreA === m.scoreB && m.shootout && (m.winnerA != null || m.winnerB != null)) {
@@ -760,29 +883,46 @@ function bracketRow(m) {
     } else if (m.scoreA > m.scoreB) outB = true;
     else if (m.scoreB > m.scoreA) outA = true;
   }
-  let scoreText;
-  if (live) scoreText = `${m.scoreA}–${m.scoreB}`;
-  else if (hasScore) scoreText = m.shootout ? `${m.scoreA}–${m.scoreB} (pens ${m.penA ?? '?'}-${m.penB ?? '?'})` : `${m.scoreA}–${m.scoreB}`;
-  else scoreText = m.kickoff ? new Date(m.kickoff).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'TBD';
-
   const ownA = a.real ? ownerInfo(m.teamA) : null;
   const ownB = b.real ? ownerInfo(m.teamB) : null;
-  const owner = (o) => o ? `<span class="ow ${o.isMe ? 'me' : ''}">${esc(o.name)}</span>` : '';
-  const ownersLine = (ownA || ownB) ? `<div class="match-owners">
-      <span class="t right">${owner(ownA)}</span>
-      <span class="ow-vs">vs</span>
-      <span class="t">${owner(ownB)}</span>
-    </div>` : '';
-  const statusTag = live ? `<span class="live-dot"></span>${esc(m.statusDetail || 'LIVE')}`
-    : final ? esc(m.statusDetail || 'FT') : '';
+  const ownerLine = (o) => o ? `<div class="bm-owner ${o.isMe ? 'me' : ''}">${esc(o.name)}</div>` : '';
 
-  return `<div class="match-row">
-    <span class="t right ${outA ? 'flag-out' : ''}">${esc(a.name)} ${a.flag}</span>
-    <span class="sc ${live ? 'live' : 'vs'}">${esc(scoreText)}</span>
-    <span class="t ${outB ? 'flag-out' : ''}">${b.flag} ${esc(b.name)}</span>
-  </div>
-  ${ownersLine}
-  ${statusTag ? `<div class="match-meta">${statusTag}</div>` : ''}`;
+  // statusDetail can still hold a stale "Scheduled"-type string from before a
+  // manual override marked the match final (status itself may still say
+  // 'pre') — only trust it once ESPN's own status has actually flipped.
+  let meta = '';
+  if (live) meta = `<div class="bm-meta live"><span class="live-dot"></span>${esc(m.statusDetail || 'LIVE')}</div>`;
+  else if (final) {
+    const label = m.shootout ? `Pens ${m.penA ?? '?'}-${m.penB ?? '?'}` : (m.status === 'post' && m.statusDetail ? m.statusDetail : 'FT');
+    meta = `<div class="bm-meta">${esc(label)}</div>`;
+  } else if (m.kickoff) meta = `<div class="bm-meta">${esc(new Date(m.kickoff).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</div>`;
+
+  return `<div class="bracket-match">
+    <div class="bm-team ${outA ? 'bm-out' : ''}">
+      <span class="bm-flag">${a.flag}</span><span class="bm-name">${esc(nameA)}</span>
+      ${hasScore ? `<span class="bm-score">${esc(m.scoreA)}</span>` : ''}
+    </div>
+    ${ownerLine(ownA)}
+    <div class="bm-team ${outB ? 'bm-out' : ''}">
+      <span class="bm-flag">${b.flag}</span><span class="bm-name">${esc(nameB)}</span>
+      ${hasScore ? `<span class="bm-score">${esc(m.scoreB)}</span>` : ''}
+    </div>
+    ${ownerLine(ownB)}
+    ${meta}
+  </div>`;
+}
+
+// Scroll the bracket strip so completed rounds are scrolled past and the
+// first round with something still to decide is in view — once per tab-entry.
+function scrollToBracketRound() {
+  if (bracketAutoScrolled || !bracketScrollTarget) return;
+  bracketAutoScrolled = true;
+  const stage = bracketScrollTarget;
+  requestAnimationFrame(() => {
+    const el = document.getElementById(`brnd-${stage}`);
+    const wrap = document.getElementById('bracket-scroll');
+    if (el && wrap) wrap.scrollLeft = Math.max(0, el.offsetLeft - 16);
+  });
 }
 
 // ---- Scores tab ----
@@ -818,7 +958,7 @@ function renderScoresTab() {
     </div>` : '';
 
   // Auto-scroll target: the first fixture that isn't finished yet (live or upcoming).
-  scoresScrollTarget = list.find((m) => m.status !== 'post')?.id || null;
+  scoresScrollTarget = list.find((m) => !isMatchFinal(m))?.id || null;
 
   return `
   <div class="card">
@@ -1034,7 +1174,7 @@ const actions = {
 
   tab(el) {
     const next = el.dataset.tab;
-    if (next !== S.tab) scoresAutoScrolled = false;
+    if (next !== S.tab) { scoresAutoScrolled = false; bracketAutoScrolled = false; }
     S.tab = next; S.error = ''; refreshAux().then(render); render();
   },
 

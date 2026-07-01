@@ -11,7 +11,7 @@ Built as a **single Node service** (Express + Socket.IO) so the live draw stream
 - **8 tiers of 6, seeded by Vegas odds**, with complementary pairing (see below).
 - **My Teams** — your four squads, their tiers, odds, records, and (once the knockouts start) whether each is still alive or out.
 - **Standings** — a leaderboard combining each player's teams (3 pts win / 1 draw, goal difference tiebreak). Counts **final results only**, so a live game never flips the table. Eliminated teams' flags show crossed out.
-- **Bracket** — the knockout tree (Round of 32 → Round of 16 → QF → SF → 3rd place → Final), each matchup showing the teams, the score, and which pool coach owns each side. The loser of a decided tie is struck through.
+- **Bracket** — a real horizontally-scrolling knockout tree (Round of 32 → Round of 16 → QF → SF → Final, with 3rd place as a side column), CSS-elbow connector lines joining each pair to the match it feeds, teams, coach owners, and the losing side of a decided tie struck through. Opening the tab auto-scrolls past any fully-decided rounds to whichever round still has something to play for. The tree's left-to-right order is reconstructed from the *real* bracket lineage (matching resolved teams back to their source fixture, and parsing ESPN's "Round of 32 8 Winner"-style placeholders for unresolved ones) — not just chronological kickoff order, which doesn't always match the actual pairing.
 - **Scores & schedule** — all 104 fixtures auto-synced from ESPN (kickoff times, LIVE/FT status, scores) on an hourly cron (every minute while a game is live), with a commissioner manual override for any match. Opening the tab auto-scrolls to the first fixture that isn't finished yet.
 
 ## Live data (scores + schedule)
