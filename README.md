@@ -9,16 +9,19 @@ Built as a **single Node service** (Express + Socket.IO) so the live draw stream
 - **Create / join pools** with a 6-letter code or share link.
 - **Live draw** with **full-screen country announcements** — each pick is a themed takeover (team colours, crest, flag, odds, who drafted it), broadcast over websockets to everyone watching. The commissioner (or the player on the clock) pulls each ball.
 - **8 tiers of 6, seeded by Vegas odds**, with complementary pairing (see below).
-- **My Teams** — your four squads, their tiers, odds, and records at a glance.
-- **Standings** — a leaderboard combining each player's teams (3 pts win / 1 draw, goal difference tiebreak). Counts **final results only**, so a live game never flips the table.
-- **Scores & schedule** — all 104 fixtures auto-synced from ESPN (kickoff times, LIVE/FT status, scores) on an hourly cron, with a commissioner manual override for any match.
+- **My Teams** — your four squads, their tiers, odds, records, and (once the knockouts start) whether each is still alive or out.
+- **Standings** — a leaderboard combining each player's teams (3 pts win / 1 draw, goal difference tiebreak). Counts **final results only**, so a live game never flips the table. Eliminated teams' flags show crossed out.
+- **Bracket** — the knockout tree (Round of 32 → Round of 16 → QF → SF → 3rd place → Final), each matchup showing the teams, the score, and which pool coach owns each side. The loser of a decided tie is struck through.
+- **Scores & schedule** — all 104 fixtures auto-synced from ESPN (kickoff times, LIVE/FT status, scores) on an hourly cron (every minute while a game is live), with a commissioner manual override for any match. Opening the tab auto-scrolls to the first fixture that isn't finished yet.
 
 ## Live data (scores + schedule)
 
 Match data comes from **ESPN's public API** (`site.api.espn.com`, free, no key). On boot and hourly the server fetches every fixture, upserts it (`lib/espn.js` → `store.upsertMatchByExtId`), and pushes `matches-updated` over websockets. `data/schedule.json` is a committed snapshot used as a fallback seed if ESPN is unreachable at boot.
 
 - **Final vs live:** ESPN reports `status` (`pre`/`in`/`post`) and a `completed` flag. Standings count a match only when it's final (or a commissioner override); live games are shown but excluded.
+- **Penalty shootouts:** a knockout match level after 120 minutes carries ESPN's per-competitor `winner` flag (plus the penalty score) even though the score line stays level — `lib/espn.js` captures this as `shootout`/`winnerA`/`winnerB`/`penA`/`penB`, and both scoring and elimination status treat it as a real win/loss rather than a draw.
 - **Manual override:** a commissioner score edit sets `manual=true` and the auto-sync never clobbers it; "↻ auto" reverts to the live feed.
+- **Elimination status:** `lib/draw.js`'s `teamStatus()` marks a team **out** once it loses an actual knockout-round match (outright or on penalties). Group-stage exits aren't detected — that needs full 12-group standings with FIFA's tiebreaker chain (including fair-play points we have no data source for), so a team that's already out in the groups still shows as alive until it would have played (and lost) a knockout tie.
 
 ## Scheduled jobs (cron service)
 
@@ -92,4 +95,4 @@ public/            Zero-build SPA (index.html, app.js, styles.css)
 ## Roadmap
 
 - **SMS reminders** — deferred: Twilio A2P 10DLC carrier registration takes days-to-weeks, so it won't clear in time for the group stage. Link invites + in-app for now; texts can layer on later.
-- **Penalty shootouts** — ESPN reports the 120-minute draw; a knockout decided on penalties currently scores as a draw unless the commissioner overrides it.
+- **Group-stage elimination** — not detected yet (see "Elimination status" above). Would need real FIFA group assignments (separate from our odds-based tiers) plus a 12-group standings + best-third-place engine.

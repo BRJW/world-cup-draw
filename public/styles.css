@@ -176,6 +176,7 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .badge.host { background: rgba(233,196,106,.16); color: var(--accent); }
 .badge.turn { background: var(--accent); color: var(--accent-ink); }
 .badge.open { background: rgba(152,161,189,.16); color: var(--muted); border: 1px dashed var(--line); }
+.badge.out { background: rgba(236,101,119,.16); color: var(--danger); }
 
 /* ---- pot pills ---- */
 .pot-pill { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 6px; color: #0a0e1a; }
@@ -203,6 +204,9 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .team .flag { font-size: 22px; }
 .team .tname { font-weight: 700; flex: 1; }
 .team .rec { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.team.team-out { opacity: .55; }
+.team.team-out .tname { text-decoration: line-through; }
+.flag-out { text-decoration: line-through; text-decoration-color: var(--danger); text-decoration-thickness: 2px; opacity: .5; }
 
 /* ---- live draw stage ---- */
 .stage {

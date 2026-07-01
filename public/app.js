@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=21';
+import { playAnnouncement } from '/announce.js?v=22';
 
 const $app = document.getElementById('app');
 
@@ -87,6 +87,8 @@ const socket = (typeof io !== 'undefined')
   ? io({ autoConnect: true })
   : { on() {}, emit() {}, on_stub: true };
 let joinedPoolId = null;
+let scoresAutoScrolled = false; // reset whenever the Scores tab is (re-)entered
+let scoresScrollTarget = null;  // id of the first not-yet-finished fixture
 
 socket.on('connect', () => { if (S.pool) joinRoom(S.pool.id); });
 socket.on('state', (state) => {
@@ -246,7 +248,7 @@ async function refreshAux() {
       const lb = await api(`/api/pools/${S.pool.id}/leaderboard`);
       S.leaderboard = lb.leaderboard; S.byPlayer = lb.byPlayer;
     }
-    if (S.tab === 'scores' || S.tab === 'standings') {
+    if (S.tab === 'scores' || S.tab === 'standings' || S.tab === 'bracket') {
       const m = await api('/api/matches');
       S.matches = m.matches; S.lastSync = m.lastSync;
     }
@@ -283,6 +285,18 @@ function render() {
   else if (S.view === 'notfound') html = renderNotFound();
   else html = renderDashboard();
   $app.innerHTML = html;
+  if (S.view === 'pool' && S.tab === 'scores') scrollToUpcomingMatch();
+}
+
+// Scroll the Scores tab down to the first fixture that isn't finished yet —
+// once per tab-entry (the flag is reset in the `tab` action).
+function scrollToUpcomingMatch() {
+  if (scoresAutoScrolled || !scoresScrollTarget) return;
+  scoresAutoScrolled = true;
+  const id = scoresScrollTarget;
+  requestAnimationFrame(() => {
+    document.getElementById(`m-${id}`)?.scrollIntoView({ block: 'center' });
+  });
 }
 
 function poolUrl(code) { return `${location.origin}/p/${code}`; }
@@ -446,6 +460,7 @@ function renderPool() {
   if (S.tab === 'draft') body = renderDraftTab();
   else if (S.tab === 'teams') body = renderTeamsTab();
   else if (S.tab === 'standings') body = renderStandingsTab();
+  else if (S.tab === 'bracket') body = renderBracketTab();
   else if (S.tab === 'scores') body = renderScoresTab();
 
   const statusChip = { setup: 'Lobby', drafting: 'Live draft', done: 'Drafted' }[p.status] || p.status;
@@ -461,6 +476,7 @@ function renderPool() {
     ${tabBtn('draft', '🎲', 'Draft')}
     ${tabBtn('teams', '👤', 'My Teams')}
     ${tabBtn('standings', '🏆', 'Standings')}
+    ${tabBtn('bracket', '🏟️', 'Bracket')}
     ${tabBtn('scores', '⚽', 'Scores')}
   </div>`;
 }
@@ -661,7 +677,11 @@ function renderClubCard() {
 function renderTeamsTab() {
   if (!S.me) return `<div class="card empty">Join a pool to see your teams.</div>`;
   const club = renderClubCard();
-  const mine = S.byPlayer[S.me.id] || S.picks.filter((p) => p.playerId === S.me.id).map((p) => ({ ...teamByCode(p.teamCode) }));
+  // Prefer the leaderboard row — it carries match records + elimination status;
+  // byPlayer is just the raw picks (used only before the first scores land).
+  const lbRow = S.leaderboard.find((r) => r.playerId === S.me.id);
+  const mine = lbRow ? lbRow.teams
+    : (S.byPlayer[S.me.id] || S.picks.filter((p) => p.playerId === S.me.id).map((p) => ({ ...teamByCode(p.teamCode) })));
   if (!mine.length) {
     return club + `<div class="card empty">You don't have any teams yet.<br/>They'll appear here once the draft runs.</div>`;
   }
@@ -672,10 +692,12 @@ function renderTeamsTab() {
     ${sorted.map((t) => {
       const r = t.record;
       const rec = r ? `${r.played}P · ${r.w}W ${r.d}D ${r.l}L · ${r.pts} pts` : 'No matches yet';
-      return `<div class="team">
+      const out = t.status === 'out';
+      return `<div class="team ${out ? 'team-out' : ''}">
         <span class="flag">${t.flag || '⚽'}</span>
         <span class="tname">${esc(t.name)}<br/><span class="muted small">${esc(t.odds || '')} to win</span></span>
         <span class="tier-pill t${t.tier}">TIER ${t.tier}</span>
+        ${out ? '<span class="badge out">Out</span>' : ''}
         <span class="rec" style="margin-left:8px">${rec}</span>
       </div>`;
     }).join('')}
@@ -700,13 +722,67 @@ function renderStandingsTab() {
         <div style="flex:1;min-width:0">
           <div class="lb-name">${esc(pl?.teamName || row.name)} ${row.playerId === S.me?.id ? '<span class="badge you">You</span>' : ''}</div>
           ${pl?.teamName ? `<div class="club-sub">${esc(row.name)}</div>` : ''}
-          <div class="lb-teams">${row.teams.map((t) => t.flag).join(' ')}</div>
+          <div class="lb-teams">${row.teams.map((t) => `<span class="${t.status === 'out' ? 'flag-out' : ''}">${t.flag}</span>`).join(' ')}</div>
           <div class="lb-sub">${row.w}W ${row.d}D ${row.l}L · GF ${row.gf} / GA ${row.ga}</div>
         </div>
         <div class="lb-pts">${row.pts}<div class="lb-sub" style="text-align:right">pts</div></div>
       </div>`;
     }).join('')}
   </div>`;
+}
+
+// ---- Bracket tab ----
+const KNOCKOUT_STAGES = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Third-place', 'Final'];
+
+function renderBracketTab() {
+  const knockouts = S.matches.filter((m) => KNOCKOUT_STAGES.includes(m.stage));
+  if (!knockouts.length) {
+    return `<div class="card empty">The bracket unlocks once the group stage wraps and the Round of 32 is set.</div>`;
+  }
+  const byStage = {};
+  for (const m of knockouts) (byStage[m.stage] ||= []).push(m);
+  return KNOCKOUT_STAGES.filter((s) => byStage[s]?.length).map((stage) => `
+    <div class="card">
+      <h3 class="date-head">${esc(stage)}</h3>
+      ${byStage[stage].map(bracketRow).join('')}
+    </div>`).join('');
+}
+
+function bracketRow(m) {
+  const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
+  const hasScore = m.scoreA != null && m.scoreB != null;
+  const live = m.status === 'in';
+  const final = m.status === 'post';
+  let outA = false, outB = false;
+  if (final && hasScore) {
+    if (m.scoreA === m.scoreB && m.shootout && (m.winnerA != null || m.winnerB != null)) {
+      outA = m.winnerA === false; outB = m.winnerB === false;
+    } else if (m.scoreA > m.scoreB) outB = true;
+    else if (m.scoreB > m.scoreA) outA = true;
+  }
+  let scoreText;
+  if (live) scoreText = `${m.scoreA}–${m.scoreB}`;
+  else if (hasScore) scoreText = m.shootout ? `${m.scoreA}–${m.scoreB} (pens ${m.penA ?? '?'}-${m.penB ?? '?'})` : `${m.scoreA}–${m.scoreB}`;
+  else scoreText = m.kickoff ? new Date(m.kickoff).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'TBD';
+
+  const ownA = a.real ? ownerInfo(m.teamA) : null;
+  const ownB = b.real ? ownerInfo(m.teamB) : null;
+  const owner = (o) => o ? `<span class="ow ${o.isMe ? 'me' : ''}">${esc(o.name)}</span>` : '';
+  const ownersLine = (ownA || ownB) ? `<div class="match-owners">
+      <span class="t right">${owner(ownA)}</span>
+      <span class="ow-vs">vs</span>
+      <span class="t">${owner(ownB)}</span>
+    </div>` : '';
+  const statusTag = live ? `<span class="live-dot"></span>${esc(m.statusDetail || 'LIVE')}`
+    : final ? esc(m.statusDetail || 'FT') : '';
+
+  return `<div class="match-row">
+    <span class="t right ${outA ? 'flag-out' : ''}">${esc(a.name)} ${a.flag}</span>
+    <span class="sc ${live ? 'live' : 'vs'}">${esc(scoreText)}</span>
+    <span class="t ${outB ? 'flag-out' : ''}">${b.flag} ${esc(b.name)}</span>
+  </div>
+  ${ownersLine}
+  ${statusTag ? `<div class="match-meta">${statusTag}</div>` : ''}`;
 }
 
 // ---- Scores tab ----
@@ -741,6 +817,9 @@ function renderScoresTab() {
       <button class="${S.scoreFilter === 'mine' ? '' : 'secondary'}" data-action="score-filter" data-f="mine" style="margin:0">My teams</button>
     </div>` : '';
 
+  // Auto-scroll target: the first fixture that isn't finished yet (live or upcoming).
+  scoresScrollTarget = list.find((m) => m.status !== 'post')?.id || null;
+
   return `
   <div class="card">
     <h2>Scores & schedule</h2>
@@ -758,7 +837,7 @@ function renderDateGroup(g) {
     : 'To be decided';
   return `<div class="card">
     <h3 class="date-head">${esc(label)}</h3>
-    ${g.items.map(matchRow).join('')}
+    ${g.items.map((m) => `<div id="m-${esc(m.id)}">${matchRow(m)}</div>`).join('')}
   </div>`;
 }
 
@@ -953,7 +1032,11 @@ const actions = {
     } catch (e) { S.error = e.message; render(); }
   },
 
-  tab(el) { S.tab = el.dataset.tab; S.error = ''; refreshAux().then(render); render(); },
+  tab(el) {
+    const next = el.dataset.tab;
+    if (next !== S.tab) scoresAutoScrolled = false;
+    S.tab = next; S.error = ''; refreshAux().then(render); render();
+  },
 
   'copy-code'() { copy(S.pool.joinCode); toast('Code copied'); },
   'copy-link'() { copy(poolUrl(S.pool.joinCode)); toast('Invite link copied'); },
