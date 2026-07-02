@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=36';
-import { flagSVG } from '/flags.js?v=36';
+import { playAnnouncement } from '/announce.js?v=37';
+import { flagSVG } from '/flags.js?v=37';
 
 const $app = document.getElementById('app');
 
@@ -756,66 +756,80 @@ const byKickoff = (a, b) => new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
 // Reconstruct the real bracket order for every round so that each match sits
 // directly inward of the two it feeds from — the inner match at position j
 // draws its feeders from outer positions 2j (its teamA side) and 2j+1 (its
-// teamB side). Kickoff order alone doesn't give this (the World Cup bracket
-// pairs winners non-consecutively, e.g. R32 match 13 vs 15), and reconciling
-// round-by-round can scramble an already-aligned round when the next one in
-// gets ordered. So instead we build the whole tree once and read it off in a
-// single consistent traversal:
+// teamB side).
 //
-//   1. Link every inner match to its two feeder MATCHES in the round outside
-//      it. A resolved side (a real team) claims the specific match that team
-//      won; a still-abstract side ("Round of 32 8 Winner") claims whatever
-//      outer matches are left over, in order — exact identity doesn't matter
-//      for an unresolved slot, only that the counts balance.
-//   2. DFS from the Final outward, teamA-subtree before teamB-subtree. A
-//      preorder walk of this balanced tree emits each round left-to-right,
-//      which is exactly the 2j / 2j+1 adjacency the wheel geometry needs, and
-//      keeps every team's node directly above the match it came from.
+// The tree edges are NOT derivable from kickoff order or simple arithmetic:
+// the World Cup bracket interleaves the halves (quarter-final 2 is fed by
+// round-of-16 matches 5 and 6, not 3 and 4; round-of-16 5 is fed by round-of-
+// 32 matches 11 and 12), so England and Argentina share a half while France
+// sits in the other. That structure lives entirely in ESPN's OFFICIAL match
+// numbering: the game IDs (`extId`) run in bracket-number order within each
+// round, and every placeholder name ("Round of 16 5 Winner") references a
+// feeder by that same official number. So:
 //
-// Falls back to plain kickoff order for any round that can't be fully built
-// (e.g. a partially-synced schedule) rather than drawing crossed wires.
+//   1. Sort each round by extId -> official position (index i = match #i+1).
+//   2. For each inner match, read its two feeders' official numbers: from the
+//      placeholder number when abstract, or (once resolved) from the official
+//      number of the outer match that team actually won. teamA's feeder first.
+//   3. DFS from the Final outward, teamA-subtree before teamB-subtree. The
+//      preorder walk emits each round left-to-right — the 2j / 2j+1 adjacency
+//      the wheel needs — now following the true bracket, not kickoff order.
+//
+// Falls back to kickoff order for any round it can't fully build (a partly-
+// synced schedule, or matches missing extId) rather than drawing a wrong tree.
+const BRACKET_PREV = {
+  'Round of 16': 'Round of 32', 'Quarter-final': 'Round of 16',
+  'Semi-final': 'Quarter-final', 'Final': 'Semi-final',
+};
 function reconcileBracketOrder(byStage) {
-  const canon = {};
-  for (const s of BRACKET_FLOW) canon[s] = byStage[s] ? [...byStage[s]].sort(byKickoff) : [];
+  const kickoff = {}, official = {};
+  for (const s of BRACKET_FLOW) {
+    kickoff[s] = byStage[s] ? [...byStage[s]].sort(byKickoff) : [];
+    // official (bracket) numbering = ascending game id; matches without an
+    // extId sort last so real fixtures keep their true order.
+    official[s] = [...kickoff[s]].sort((a, b) => (Number(a.extId) || Infinity) - (Number(b.extId) || Infinity));
+  }
+  const feederNum = (name) => { const m = /(\d+)\s*winner\s*$/i.exec(name || ''); return m ? Number(m[1]) : null; };
+  const winnerCodeOf = (m) => {
+    if (m.status === 'in' || m.scoreA == null || m.scoreB == null) return null;
+    if (m.scoreA === m.scoreB) return m.shootout ? (m.winnerA ? m.teamA : m.teamB) : null;
+    return m.scoreA > m.scoreB ? m.teamA : m.teamB;
+  };
+  // Official number (1-based) of the prev-round match a resolved side came from.
+  const feederNumForSide = (code, name, prevStage) => {
+    const ph = feederNum(name); if (ph != null) return ph;
+    if (!code || !teamByCode(code)) return null;
+    const idx = official[prevStage].findIndex((o) => winnerCodeOf(o) === code || o.teamA === code || o.teamB === code);
+    return idx >= 0 ? idx + 1 : null;
+  };
 
-  const feeders = new Map(); // inner match -> [feederA, feederB]
-  for (let i = BRACKET_FLOW.length - 1; i >= 1; i--) {
-    const inner = canon[BRACKET_FLOW[i]], outer = canon[BRACKET_FLOW[i - 1]];
-    if (!inner.length || !outer.length) continue;
-    const claimed = new Set();
-    const claimReal = (code) => {
-      if (!code || !teamByCode(code)) return null; // placeholder / unresolved
-      const f = outer.find((o) => !claimed.has(o) && (o.teamA === code || o.teamB === code));
-      if (f) { claimed.add(f); return f; }
-      return null;
-    };
-    // Resolve all real sides first (they need specific matches), then hand the
-    // leftovers to the abstract sides.
-    const linkA = new Map(), linkB = new Map();
-    for (const m of inner) { const f = claimReal(m.teamA); if (f) linkA.set(m, f); }
-    for (const m of inner) { const f = claimReal(m.teamB); if (f) linkB.set(m, f); }
-    const leftover = outer.filter((o) => !claimed.has(o)); let li = 0;
-    for (const m of inner) {
-      let fA = linkA.get(m) || null, fB = linkB.get(m) || null;
-      if (!fA) fA = leftover[li++] || null;
-      if (!fB) fB = leftover[li++] || null;
-      feeders.set(m, [fA, fB]);
-    }
+  // Edge table: for each round, official match number -> [feederNumA, feederNumB].
+  const edges = {};
+  for (const s of BRACKET_FLOW) {
+    if (s === 'Round of 32') continue;
+    edges[s] = official[s].map((m) => [
+      feederNumForSide(m.teamA, m.teamAName, BRACKET_PREV[s]),
+      feederNumForSide(m.teamB, m.teamBName, BRACKET_PREV[s]),
+    ]);
   }
 
   const ordered = {}; for (const s of BRACKET_FLOW) ordered[s] = [];
   let anchor = BRACKET_FLOW.length - 1; // innermost non-empty round
-  while (anchor > 0 && !canon[BRACKET_FLOW[anchor]].length) anchor--;
-  const walk = (m, i) => {
+  while (anchor > 0 && !official[BRACKET_FLOW[anchor]].length) anchor--;
+  const seen = new Set();
+  const walk = (i, num) => {
+    const list = official[BRACKET_FLOW[i]];
+    const m = list[num - 1];
+    if (!m || seen.has(m)) return; seen.add(m);
     ordered[BRACKET_FLOW[i]].push(m);
     if (i === 0) return;
-    const [fA, fB] = feeders.get(m) || [];
-    if (fA) walk(fA, i - 1);
-    if (fB) walk(fB, i - 1);
+    const [na, nb] = edges[BRACKET_FLOW[i]][num - 1] || [];
+    if (na) walk(i - 1, na);
+    if (nb) walk(i - 1, nb);
   };
-  for (const m of canon[BRACKET_FLOW[anchor]]) walk(m, anchor);
+  official[BRACKET_FLOW[anchor]].forEach((_, i) => walk(anchor, i + 1));
   // Any round the walk didn't fully populate (incomplete data) -> kickoff order.
-  for (const s of BRACKET_FLOW) if (ordered[s].length !== canon[s].length) ordered[s] = canon[s];
+  for (const s of BRACKET_FLOW) if (ordered[s].length !== kickoff[s].length) ordered[s] = kickoff[s];
   return ordered;
 }
 
