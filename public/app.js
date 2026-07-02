@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=35';
-import { flagSVG } from '/flags.js?v=35';
+import { playAnnouncement } from '/announce.js?v=36';
+import { flagSVG } from '/flags.js?v=36';
 
 const $app = document.getElementById('app');
 
@@ -975,15 +975,21 @@ const wheelAngleAt = (i, n) => WHEEL_GAP_RAD / 2 + (i / n) * WHEEL_USABLE_RAD;
 // keeps going). The loser's own arc highlights red — but only up to the
 // point the two paths meet, never continuing inward, since that branch
 // stops right there.
-function elbowConnector(cx, cy, rChild, aA, aB, rParent, winnerSide) {
+// `suppressWin` = draw the winner's arc + the inward line plain rather than
+// green. Used under the coach filter when the winner isn't one of the
+// filtered coach's teams: their onward path belongs to the opponent, so we
+// don't trace it green past the juncture. The loser's red arc still shows,
+// since that's where the coach's own team's run ended.
+function elbowConnector(cx, cy, rChild, aA, aB, rParent, winnerSide, suppressWin) {
   const aMid = (aA + aB) / 2;
   const [xA, yA] = polar(cx, cy, rChild, aA);
   const [xB, yB] = polar(cx, cy, rChild, aB);
   const [xM, yM] = polar(cx, cy, rChild, aMid);
   const [xP, yP] = polar(cx, cy, rParent, aMid);
   const arc = (x1, y1, x2, y2) => `M${x1.toFixed(2)},${y1.toFixed(2)} A${rChild.toFixed(2)},${rChild.toFixed(2)} 0 0,1 ${x2.toFixed(2)},${y2.toFixed(2)}`;
-  const clsFor = (side) => !winnerSide ? 'belbow' : winnerSide === side ? 'belbow belbow-win' : 'belbow belbow-loss';
-  const lineCls = winnerSide ? 'belbow belbow-win' : 'belbow';
+  const win = winnerSide && !suppressWin;
+  const clsFor = (side) => !winnerSide ? 'belbow' : winnerSide === side ? (win ? 'belbow belbow-win' : 'belbow') : 'belbow belbow-loss';
+  const lineCls = win ? 'belbow belbow-win' : 'belbow';
   return `<path class="${clsFor('A')}" d="${arc(xA, yA, xM, yM)}"></path>
     <path class="${clsFor('B')}" d="${arc(xM, yM, xB, yB)}"></path>
     <line class="${lineCls}" x1="${xM.toFixed(2)}" y1="${yM.toFixed(2)}" x2="${xP.toFixed(2)}" y2="${yP.toFixed(2)}"></line>`;
@@ -1134,9 +1140,13 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
   const groupDim = bracketDimmed(m, a, b);
   const grayA = !!(hl && !groupDim && !(a.real && hl.has(m.teamA)));
   const grayB = !!(hl && !groupDim && !(b.real && hl.has(m.teamB)));
+  // Under the filter, don't trace the green path onward when the winner isn't
+  // one of the coach's teams (their team lost here, or neither is theirs).
+  const winnerCode = winnerSide === 'A' ? m.teamA : winnerSide === 'B' ? m.teamB : null;
+  const suppressWin = !!(hl && winnerCode && !hl.has(winnerCode));
 
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${groupDim ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
-    ${elbowConnector(cx, cy, rRing, aA, aB, rNext, winnerSide)}
+    ${elbowConnector(cx, cy, rRing, aA, aB, rNext, winnerSide, suppressWin)}
     ${team(aA, a, m.teamA, outA, ownA, winnerSide === 'A', grayA)}
     ${team(aB, b, m.teamB, outB, ownB, winnerSide === 'B', grayB)}
     ${scorePill}
