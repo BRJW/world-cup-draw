@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=29';
-import { flagSVG } from '/flags.js?v=29';
+import { playAnnouncement } from '/announce.js?v=30';
+import { flagSVG } from '/flags.js?v=30';
 
 const $app = document.getElementById('app');
 
@@ -897,6 +897,26 @@ function radialLabel(text, x, y, deg, availPx, fontSize, cls) {
     + `font-size="${fontSize}" transform="rotate(${deg.toFixed(1)} ${x.toFixed(2)} ${y.toFixed(2)})"${constrain}>${esc(text)}</text>`;
 }
 
+// Two stacked lines (team name, coach) that stay correctly stacked at *any*
+// rotation angle. Stacking via two different radii (i.e. two independent
+// radialLabel calls) only reads as vertical separation near a ±90° rotation
+// — near 0°/180° that same radial gap becomes a *horizontal* offset far too
+// small to keep two full-width labels apart, so they collide. Fix: rotate a
+// single <g> around one shared pivot, and offset the second line via `y` in
+// the *pre-rotation* frame — the rotation carries that offset along with it,
+// so it always ends up perpendicular to the text's own reading direction.
+function radialLabelStack(lines, x, y, deg, availPx) {
+  let inner = '';
+  let cursorY = y;
+  lines.forEach(([text, fontSize, cls], i) => {
+    if (i > 0) cursorY += fontSize * 0.95;
+    const estWidth = text.length * fontSize * 0.56;
+    const constrain = estWidth > availPx ? ` textLength="${availPx.toFixed(1)}" lengthAdjust="spacingAndGlyphs"` : '';
+    inner += `<text class="${cls || ''}" x="${x.toFixed(2)}" y="${cursorY.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fontSize}"${constrain}>${esc(text)}</text>`;
+  });
+  return `<g transform="rotate(${deg.toFixed(1)} ${x.toFixed(2)} ${y.toFixed(2)})">${inner}</g>`;
+}
+
 const RING_TITLES = {
   'Round of 32': 'ROUND OF 32', 'Round of 16': 'ROUND OF 16',
   'Quarter-final': 'QUARTER-FINAL', 'Semi-final': 'SEMI-FINAL',
@@ -915,6 +935,10 @@ const wheelAngleAt = (i, n) => WHEEL_GAP_RAD / 2 + (i / n) * WHEEL_USABLE_RAD;
 // winning side's own arc + the shared inward line are highlighted so you
 // can trace a team's path forward at a glance; the losing side's arc stays
 // plain since that branch stops here.
+// The winner's own arc + the shared inward line highlight green (their path
+// keeps going). The loser's own arc highlights red — but only up to the
+// point the two paths meet, never continuing inward, since that branch
+// stops right there.
 function elbowConnector(cx, cy, rChild, aA, aB, rParent, winnerSide) {
   const aMid = (aA + aB) / 2;
   const [xA, yA] = polar(cx, cy, rChild, aA);
@@ -922,10 +946,11 @@ function elbowConnector(cx, cy, rChild, aA, aB, rParent, winnerSide) {
   const [xM, yM] = polar(cx, cy, rChild, aMid);
   const [xP, yP] = polar(cx, cy, rParent, aMid);
   const arc = (x1, y1, x2, y2) => `M${x1.toFixed(2)},${y1.toFixed(2)} A${rChild.toFixed(2)},${rChild.toFixed(2)} 0 0,1 ${x2.toFixed(2)},${y2.toFixed(2)}`;
-  const cls = (side) => `belbow${winnerSide === side ? ' belbow-win' : ''}`;
-  return `<path class="${cls('A')}" d="${arc(xA, yA, xM, yM)}"></path>
-    <path class="${cls('B')}" d="${arc(xM, yM, xB, yB)}"></path>
-    <line class="${cls(winnerSide ? winnerSide : '')}" x1="${xM.toFixed(2)}" y1="${yM.toFixed(2)}" x2="${xP.toFixed(2)}" y2="${yP.toFixed(2)}"></line>`;
+  const clsFor = (side) => !winnerSide ? 'belbow' : winnerSide === side ? 'belbow belbow-win' : 'belbow belbow-loss';
+  const lineCls = winnerSide ? 'belbow belbow-win' : 'belbow';
+  return `<path class="${clsFor('A')}" d="${arc(xA, yA, xM, yM)}"></path>
+    <path class="${clsFor('B')}" d="${arc(xM, yM, xB, yB)}"></path>
+    <line class="${lineCls}" x1="${xM.toFixed(2)}" y1="${yM.toFixed(2)}" x2="${xP.toFixed(2)}" y2="${yP.toFixed(2)}"></line>`;
 }
 
 // Post-process flagSVG's standalone <svg viewBox="0 0 300 200">...</svg>
@@ -999,6 +1024,7 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
   const annulus = rRing - rNext;
   const teamSpanRad = (aB - aA) / 2; // each team's own angular allocation
   const fontSize = Math.min(10, Math.max(7, teamSpanRad * rRing * 0.44));
+  const coachFontSize = Math.max(6.5, fontSize - 2);
   const dotR = Math.min(13, Math.max(7, teamSpanRad * rRing * 0.42));
 
   // Undecided placeholder slots ("Round of 32 8 Winner") get a bare node —
@@ -1010,13 +1036,21 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
     const resultCls = decided ? (isWinner ? ' bnode-win' : ' bnode-loss') : '';
     let html = `<circle class="bnode${resultCls}${!t.real ? ' bnode-tbd' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`;
     if (t.real) {
-      html += flagBadge(code, teamByCode(code), dx, dy, dotR * 0.78);
+      // Flag fills the node circle exactly (matches the win/loss ring drawn
+      // around it, rather than floating as a smaller inset). The label
+      // block starts clear of the flag's edge and runs inward, on its own
+      // rotation — team name then coach as two lines stacked in the text's
+      // own local frame (see radialLabelStack), so they never collide with
+      // the flag or each other and are never upside down.
+      html += flagBadge(code, teamByCode(code), dx, dy, dotR);
       const deg = radialDeg(angle);
-      const nameR = rRing - annulus * 0.32;
-      const availLen = annulus * 0.5;
+      const gap = dotR + 6;
+      const availLen = Math.max(20, annulus - gap - fontSize - 10);
+      const nameR = rRing - gap - fontSize * 0.5;
       const [nx, ny] = polar(cx, cy, nameR, angle);
-      const label = own ? `${t.name} — ${own.name}` : t.name;
-      html += radialLabel(label, nx, ny, deg, availLen, fontSize, `${out ? 'bwedge-out-text' : ''}${own?.isMe ? ' bwedge-mine' : ''}`);
+      const lines = [[t.name, fontSize, out ? 'bwedge-out-text' : '']];
+      if (own) lines.push([own.name, coachFontSize, `bwedge-coach${own.isMe ? ' me' : ''}`]);
+      html += radialLabelStack(lines, nx, ny, deg, availLen);
     }
     return html;
   };
@@ -1043,13 +1077,17 @@ function bracketCenter(m, cx, cy, r) {
       <text x="${cx}" y="${cy + (champ ? 30 : 22)}" text-anchor="middle" font-size="9" class="bcenter-label">${champ ? 'CHAMPION' : 'FINAL'}</text>
     </g>`;
   }
+  // There's only one Final match, whether or not its two finalists are
+  // known yet — never label the two (still-empty) sides "Match 1"/"Match 2"
+  // the way an undecided wedge elsewhere shows no text at all. Only show a
+  // finalist's flag once that side has actually resolved to a real team.
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--card2)" stroke="var(--line)"></circle>
-    ${a.real ? flagBadge(m.teamA, teamByCode(m.teamA), cx - r * 0.36, cy - r * 0.32, r * 0.32) : ''}
-    ${b.real ? flagBadge(m.teamB, teamByCode(m.teamB), cx + r * 0.36, cy - r * 0.32, r * 0.32) : ''}
-    ${radialLabel(a.real ? a.name : shortenPlaceholder(a.name), cx, cy + 4, 0, avail, 10, outA ? 'bwedge-out-text' : '')}
-    ${radialLabel(b.real ? b.name : shortenPlaceholder(b.name), cx, cy + 16, 0, avail, 10, outB ? 'bwedge-out-text' : '')}
-    <text x="${cx}" y="${cy + 32}" text-anchor="middle" font-size="9" class="bcenter-label">FINAL</text>
+    ${a.real ? flagBadge(m.teamA, teamByCode(m.teamA), cx - r * 0.36, cy - r * 0.3, r * 0.34) : ''}
+    ${b.real ? flagBadge(m.teamB, teamByCode(m.teamB), cx + r * 0.36, cy - r * 0.3, r * 0.34) : ''}
+    ${a.real ? radialLabel(a.name, cx - r * 0.36, cy + r * 0.32, 0, r * 0.66, 8, outA ? 'bwedge-out-text' : '') : ''}
+    ${b.real ? radialLabel(b.name, cx + r * 0.36, cy + r * 0.32, 0, r * 0.66, 8, outB ? 'bwedge-out-text' : '') : ''}
+    <text x="${cx}" y="${cy + r * 0.62}" text-anchor="middle" font-size="9" class="bcenter-label">FINAL</text>
   </g>`;
 }
 
