@@ -19,6 +19,8 @@
   /* live / error */
   --live: #f0606f;
   --danger: #ec6577;
+  /* win / advanced */
+  --win: #5fc98a;
 
   --radius: 18px;
   --pot1: #e9c46a;
@@ -292,20 +294,22 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .bracket-wheel-card { display: flex; justify-content: center; padding: 12px 6px; }
 .bracket-wheel { width: 100%; height: auto; touch-action: manipulation; }
 .bwedge { cursor: pointer; }
-.bnode { fill: var(--card2); stroke: var(--line); stroke-width: 1.5; transition: fill .15s, stroke .15s; }
+.bnode { fill: var(--card2); stroke: var(--line); stroke-width: 2; transition: fill .15s, stroke .15s; }
 .bwedge:active .bnode { fill: var(--card); }
-.bnode.bnode-out { fill: rgba(152,161,189,.1); opacity: .55; }
+.bnode.bnode-win { fill: rgba(95,201,138,.3); stroke: var(--win); }
+.bnode.bnode-loss { fill: rgba(236,101,119,.16); stroke: var(--danger); opacity: .6; }
 .bnode.bnode-tbd { fill: none; stroke: var(--line-soft); stroke-dasharray: 2 2; }
 .bwedge-live .bnode { fill: rgba(240,96,111,.28); stroke: var(--live); }
-.bwedge-selected .bnode { fill: rgba(233,196,106,.3); stroke: var(--accent); }
+.bwedge-selected .bnode { stroke: var(--accent); stroke-width: 2.5; }
 .bwedge text { fill: var(--txt); pointer-events: none; font-weight: 600; font-family: inherit; }
-.bwedge text.bwedge-out-text { opacity: .4; text-decoration: line-through; }
+.bwedge text.bwedge-out-text { opacity: .55; text-decoration: line-through; }
 .bwedge text.bwedge-mine { fill: var(--accent); }
 .bcenter-final { fill: rgba(233,196,106,.16); stroke: var(--accent); stroke-width: 2; }
 .bcenter-label { fill: var(--muted); font-weight: 800; letter-spacing: 1px; }
 .bcenter-name { fill: var(--txt); font-weight: 700; }
 .bwedge-selected .bcenter-label, .bwedge-selected text.bcenter-label { fill: var(--accent); }
-.belbow { stroke: var(--line); stroke-width: 1.5; fill: none; opacity: .8; }
+.belbow { stroke: var(--line); stroke-width: 1.5; fill: none; opacity: .7; }
+.belbow.belbow-win { stroke: var(--win); stroke-width: 2.5; opacity: 1; }
 .bwedge-selected .belbow, .bwedge-live .belbow { opacity: 1; }
 .bring-title { fill: var(--accent); font-weight: 800; letter-spacing: .5px; opacity: .9; pointer-events: none; }
 

@@ -1,7 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=28';
+import { playAnnouncement } from '/announce.js?v=29';
+import { flagSVG } from '/flags.js?v=29';
 
 const $app = document.getElementById('app');
 
@@ -910,17 +911,32 @@ const wheelAngleAt = (i, n) => WHEEL_GAP_RAD / 2 + (i / n) * WHEEL_USABLE_RAD;
 // A standard tournament bracket's elbow connector (two right-angle turns
 // joining a pair of entrants to the match they feed) bent into polar space:
 // an arc at the child ring's own radius sweeping from each team's angle to
-// their shared midpoint, then one radial line inward to the next node.
-function elbowConnector(cx, cy, rChild, aA, aB, rParent) {
+// their shared midpoint, then one radial line inward to the next node. The
+// winning side's own arc + the shared inward line are highlighted so you
+// can trace a team's path forward at a glance; the losing side's arc stays
+// plain since that branch stops here.
+function elbowConnector(cx, cy, rChild, aA, aB, rParent, winnerSide) {
   const aMid = (aA + aB) / 2;
   const [xA, yA] = polar(cx, cy, rChild, aA);
   const [xB, yB] = polar(cx, cy, rChild, aB);
   const [xM, yM] = polar(cx, cy, rChild, aMid);
   const [xP, yP] = polar(cx, cy, rParent, aMid);
   const arc = (x1, y1, x2, y2) => `M${x1.toFixed(2)},${y1.toFixed(2)} A${rChild.toFixed(2)},${rChild.toFixed(2)} 0 0,1 ${x2.toFixed(2)},${y2.toFixed(2)}`;
-  return `<path class="belbow" d="${arc(xA, yA, xM, yM)}"></path>
-    <path class="belbow" d="${arc(xM, yM, xB, yB)}"></path>
-    <line class="belbow" x1="${xM.toFixed(2)}" y1="${yM.toFixed(2)}" x2="${xP.toFixed(2)}" y2="${yP.toFixed(2)}"></line>`;
+  const cls = (side) => `belbow${winnerSide === side ? ' belbow-win' : ''}`;
+  return `<path class="${cls('A')}" d="${arc(xA, yA, xM, yM)}"></path>
+    <path class="${cls('B')}" d="${arc(xM, yM, xB, yB)}"></path>
+    <line class="${cls(winnerSide ? winnerSide : '')}" x1="${xM.toFixed(2)}" y1="${yM.toFixed(2)}" x2="${xP.toFixed(2)}" y2="${yP.toFixed(2)}"></line>`;
+}
+
+// Post-process flagSVG's standalone <svg viewBox="0 0 300 200">...</svg>
+// string into a circularly-clipped badge sized/positioned for one node —
+// real vector flag art instead of an emoji glyph, which some browsers (iOS
+// Safari confirmed) render as a blank placeholder box inside SVG <text>.
+function flagBadge(code, team, cx, cy, r) {
+  const raw = flagSVG(code, team);
+  const inner = raw.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
+  const size = (r * 2).toFixed(2);
+  return `<svg x="${(cx - r).toFixed(2)}" y="${(cy - r).toFixed(2)}" width="${size}" height="${size}" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice" clip-path="url(#bcircleclip)">${inner}</svg>`;
 }
 
 function renderBracketWheel(ringStages, byStage, finalMatch) {
@@ -954,54 +970,61 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
     <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="22">🏆</text>`;
 
   return `<svg viewBox="0 0 ${SIZE} ${SIZE}" class="bracket-wheel" xmlns="http://www.w3.org/2000/svg">
+    <defs><clipPath id="bcircleclip" clipPathUnits="objectBoundingBox"><circle cx=".5" cy=".5" r=".5"></circle></clipPath></defs>
     ${nodes}
     ${centerContent}
     ${titles}
   </svg>`;
 }
 
-// A match is two small flag-circle nodes (one per team, like leaves of a
-// tree) plus the elbow connector feeding their winner into the next ring in
-// — name + coach written into the annulus toward the centre. No filled
-// wedge background, so the ring reads as a bracket diagram (dots and
-// branches) rather than a pie/donut chart.
+// A match is two flag-badge nodes (one per team, like leaves of a tree) plus
+// the elbow connector feeding the winner into the next ring in — a smaller
+// name (+ coach) label sits just inside each node. The node itself is the
+// real vector flag art (not an emoji glyph — see flagBadge), ringed green
+// once that team has won its tie or red once it's lost, and the winner's
+// branch of the connector is highlighted so their path forward is obvious
+// at a glance.
 function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
-  const { outA, outB, live } = bracketOutcome(m);
+  const { outA, outB, final, live } = bracketOutcome(m);
   const ownA = a.real ? ownerInfo(m.teamA) : null;
   const ownB = b.real ? ownerInfo(m.teamB) : null;
   const selected = m.id === bracketSelectedId;
+  // Only claim a colour once we're sure: a final match where exactly one
+  // side is marked out. An ambiguous draw with no shootout data (a known
+  // gap — see README) stays neutral rather than guessing a winner.
+  const decided = final && (outA || outB);
+  const winnerSide = decided ? (outA ? 'B' : 'A') : null;
 
   const annulus = rRing - rNext;
   const teamSpanRad = (aB - aA) / 2; // each team's own angular allocation
-  const fontSize = Math.min(12, Math.max(8, teamSpanRad * rRing * 0.6));
-  const dotR = Math.min(7, Math.max(3.5, teamSpanRad * rRing * 0.28));
+  const fontSize = Math.min(10, Math.max(7, teamSpanRad * rRing * 0.44));
+  const dotR = Math.min(13, Math.max(7, teamSpanRad * rRing * 0.42));
 
   // Undecided placeholder slots ("Round of 32 8 Winner") get a bare node —
-  // no text at all, not even "Match 8". There's nothing useful to say about
-  // a slot until it actually resolves to a team, and a whole ring of
-  // "Match N" labels was just noise. A real team always gets one single
-  // line combining name + coach (never two stacked lines): once every slot
-  // in a fully-drafted 12-player pool has a coach, two separate radial
-  // labels per team had nowhere to go but on top of each other.
-  const team = (angle, t, out, own) => {
+  // no text, no flag. There's nothing useful to say about a slot until it
+  // actually resolves to a team, and a whole ring of "Match N" labels was
+  // just noise.
+  const team = (angle, t, code, out, own, isWinner) => {
     const [dx, dy] = polar(cx, cy, rRing, angle);
-    let html = `<circle class="bnode${out ? ' bnode-out' : ''}${!t.real ? ' bnode-tbd' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`;
+    const resultCls = decided ? (isWinner ? ' bnode-win' : ' bnode-loss') : '';
+    let html = `<circle class="bnode${resultCls}${!t.real ? ' bnode-tbd' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`;
     if (t.real) {
+      html += flagBadge(code, teamByCode(code), dx, dy, dotR * 0.78);
       const deg = radialDeg(angle);
-      const nameR = rRing - annulus * 0.4;
-      const availLen = annulus * 0.62;
+      const nameR = rRing - annulus * 0.32;
+      const availLen = annulus * 0.5;
       const [nx, ny] = polar(cx, cy, nameR, angle);
-      const label = own ? `${t.flag} ${t.name} — ${own.name}` : `${t.flag} ${t.name}`;
+      const label = own ? `${t.name} — ${own.name}` : t.name;
       html += radialLabel(label, nx, ny, deg, availLen, fontSize, `${out ? 'bwedge-out-text' : ''}${own?.isMe ? ' bwedge-mine' : ''}`);
     }
     return html;
   };
 
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
-    ${elbowConnector(cx, cy, rRing, aA, aB, rNext)}
-    ${team(aA, a, outA, ownA)}
-    ${team(aB, b, outB, ownB)}
+    ${elbowConnector(cx, cy, rRing, aA, aB, rNext, winnerSide)}
+    ${team(aA, a, m.teamA, outA, ownA, winnerSide === 'A')}
+    ${team(aB, b, m.teamB, outB, ownB, winnerSide === 'B')}
   </g>`;
 }
 
@@ -1011,19 +1034,21 @@ function bracketCenter(m, cx, cy, r) {
   const selected = m.id === bracketSelectedId;
   const avail = r * 1.5;
   if (final) {
+    const champCode = outA ? m.teamB : outB ? m.teamA : null;
     const champ = outA ? b : outB ? a : null;
     return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
       <circle cx="${cx}" cy="${cy}" r="${r}" class="bcenter-final"></circle>
-      <text x="${cx}" y="${cy - 14}" text-anchor="middle" font-size="22">${champ ? champ.flag : '🏆'}</text>
-      ${champ ? radialLabel(champ.name, cx, cy + 6, 0, avail, 13, 'bcenter-name') : ''}
-      <text x="${cx}" y="${cy + 22}" text-anchor="middle" font-size="9" class="bcenter-label">${champ ? 'CHAMPION' : 'FINAL'}</text>
+      ${champ ? flagBadge(champCode, teamByCode(champCode), cx, cy - 12, r * 0.42) : `<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="22">🏆</text>`}
+      ${champ ? radialLabel(champ.name, cx, cy + 16, 0, avail, 12, 'bcenter-name') : ''}
+      <text x="${cx}" y="${cy + (champ ? 30 : 22)}" text-anchor="middle" font-size="9" class="bcenter-label">${champ ? 'CHAMPION' : 'FINAL'}</text>
     </g>`;
   }
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--card2)" stroke="var(--line)"></circle>
-    <text x="${cx}" y="${cy - 16}" text-anchor="middle" font-size="16">${a.flag}${b.flag}</text>
-    ${radialLabel(a.real ? a.name : shortenPlaceholder(a.name), cx, cy + 2, 0, avail, 11, outA ? 'bwedge-out-text' : '')}
-    ${radialLabel(b.real ? b.name : shortenPlaceholder(b.name), cx, cy + 16, 0, avail, 11, outB ? 'bwedge-out-text' : '')}
+    ${a.real ? flagBadge(m.teamA, teamByCode(m.teamA), cx - r * 0.36, cy - r * 0.32, r * 0.32) : ''}
+    ${b.real ? flagBadge(m.teamB, teamByCode(m.teamB), cx + r * 0.36, cy - r * 0.32, r * 0.32) : ''}
+    ${radialLabel(a.real ? a.name : shortenPlaceholder(a.name), cx, cy + 4, 0, avail, 10, outA ? 'bwedge-out-text' : '')}
+    ${radialLabel(b.real ? b.name : shortenPlaceholder(b.name), cx, cy + 16, 0, avail, 10, outB ? 'bwedge-out-text' : '')}
     <text x="${cx}" y="${cy + 32}" text-anchor="middle" font-size="9" class="bcenter-label">FINAL</text>
   </g>`;
 }
