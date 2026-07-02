@@ -322,6 +322,7 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .bwedge-live .bscore rect { stroke: var(--live); }
 .bwedge-live .bscore text { fill: var(--live); }
 .bwedge-dim { opacity: .12; }
+.bteam-dim { opacity: .3; }
 
 /* coach spotlight filter chips under the wheel */
 .bfilter { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 14px; }

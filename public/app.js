@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=33';
-import { flagSVG } from '/flags.js?v=33';
+import { playAnnouncement } from '/announce.js?v=34';
+import { flagSVG } from '/flags.js?v=34';
 
 const $app = document.getElementById('app');
 
@@ -248,9 +248,7 @@ async function summarizePool(poolId, m) {
 async function refreshAux() {
   if (!S.pool) return;
   try {
-    // bracket needs the leaderboard too — its coach filter reads each
-    // team's alive/out status off the leaderboard rows
-    if (S.tab === 'standings' || S.tab === 'teams' || S.tab === 'bracket') {
+    if (S.tab === 'standings' || S.tab === 'teams') {
       const lb = await api(`/api/pools/${S.pool.id}/leaderboard`);
       S.leaderboard = lb.leaderboard; S.byPlayer = lb.byPlayer;
     }
@@ -856,16 +854,17 @@ function renderBracketTab() {
   const ringStages = BRACKET_FLOW.slice(0, -1).filter((s) => byStage[s]?.length);
   const finalMatch = byStage['Final']?.[0] || null;
 
-  // Coach spotlight: while a coach is selected, only matches involving one
-  // of their still-remaining teams stay at full strength — everything else
-  // dims. "Remaining" comes from the leaderboard's per-team alive/out
-  // status, so a team knocked out in a later round dims its earlier
-  // (winning) nodes too.
+  // Coach spotlight: while a coach is selected, ALL of their teams stay at
+  // full strength — eliminated ones included, keeping their grey/crossed
+  // treatment, so you can see their whole campaign. Matches involving one
+  // of their teams stay visible (including an upcoming one's kickoff
+  // pill), with the opponent's node greyed unless it's also theirs;
+  // matches involving none of their teams fade right back.
   bracketHighlightCodes = null;
   if (bracketCoachFilter) {
-    const row = S.leaderboard.find((r) => r.playerId === bracketCoachFilter);
-    if (row) bracketHighlightCodes = new Set(row.teams.filter((t) => t.status === 'alive').map((t) => t.code));
-    else bracketCoachFilter = null; // player gone / leaderboard not loaded — fail open
+    const codes = S.picks.filter((p) => p.playerId === bracketCoachFilter).map((p) => p.teamCode);
+    if (codes.length) bracketHighlightCodes = new Set(codes);
+    else bracketCoachFilter = null; // player gone — fail open
   }
 
   const svg = renderBracketWheel(ringStages, byStage, finalMatch, third);
@@ -1084,7 +1083,7 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
   // no text, no flag. There's nothing useful to say about a slot until it
   // actually resolves to a team, and a whole ring of "Match N" labels was
   // just noise.
-  const team = (angle, t, code, out, own, isWinner) => {
+  const team = (angle, t, code, out, own, isWinner, gray = false) => {
     const [dx, dy] = polar(cx, cy, rRing, angle);
     const resultCls = decided ? (isWinner ? ' bnode-win' : ' bnode-loss') : '';
     let html = `<circle class="bnode${resultCls}${!t.real ? ' bnode-tbd' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`;
@@ -1110,16 +1109,24 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
       if (own) lines.push([own.name, coachFontSize, `bwedge-coach${own.isMe ? ' me' : ''}`]);
       html += radialLabelStack(lines, nx, ny, deg, availLen);
     }
-    return html;
+    return gray ? `<g class="bteam-dim">${html}</g>` : html;
   };
 
   const [jx, jy] = polar(cx, cy, rRing, (aA + aB) / 2);
   const scorePill = junctionPill(jx, jy, m, a.real && b.real);
 
-  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${bracketDimmed(m, a, b) ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+  // Filter active + this match involves the coach: their side stays full
+  // strength, the opponent's node greys individually (unless it's also one
+  // of theirs). A match with none of their teams dims as a whole group.
+  const hl = bracketHighlightCodes;
+  const groupDim = bracketDimmed(m, a, b);
+  const grayA = !!(hl && !groupDim && !(a.real && hl.has(m.teamA)));
+  const grayB = !!(hl && !groupDim && !(b.real && hl.has(m.teamB)));
+
+  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${groupDim ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     ${elbowConnector(cx, cy, rRing, aA, aB, rNext, winnerSide)}
-    ${team(aA, a, m.teamA, outA, ownA, winnerSide === 'A')}
-    ${team(aB, b, m.teamB, outB, ownB, winnerSide === 'B')}
+    ${team(aA, a, m.teamA, outA, ownA, winnerSide === 'A', grayA)}
+    ${team(aB, b, m.teamB, outB, ownB, winnerSide === 'B', grayB)}
     ${scorePill}
   </g>`;
 }
@@ -1169,13 +1176,22 @@ function bracketCenter(m, cx, cy, r) {
   const { outA, outB, final } = bracketOutcome(m);
   const selected = m.id === bracketSelectedId;
   const avail = r * 1.5;
+  // Coach filter applies here too — but only the per-side grey, never the
+  // whole-group fade: the FINAL bullseye is the wheel's anchor and washing
+  // it out reads as a rendering bug rather than a filter.
+  const hl = bracketHighlightCodes;
+  const grayA = !!(hl && !(a.real && hl.has(m.teamA)));
+  const grayB = !!(hl && !(b.real && hl.has(m.teamB)));
   if (final) {
     const champCode = outA ? m.teamB : outB ? m.teamA : null;
     const champ = outA ? b : outB ? a : null;
+    const champGray = !!(hl && champCode && !hl.has(champCode));
     return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
       <circle cx="${cx}" cy="${cy}" r="${r}" class="bcenter-final"></circle>
+      ${champGray ? '<g class="bteam-dim">' : ''}
       ${champ ? flagBadge(champCode, teamByCode(champCode), cx, cy - 12, r * 0.42) : `<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="22">🏆</text>`}
       ${champ ? radialLabel(champ.name, cx, cy + 16, 0, avail, 12, 'bcenter-name') : ''}
+      ${champGray ? '</g>' : ''}
       <text x="${cx}" y="${cy + (champ ? 30 : 22)}" text-anchor="middle" font-size="9" class="bcenter-label">${champ ? 'CHAMPION' : 'FINAL'}</text>
     </g>`;
   }
@@ -1183,12 +1199,13 @@ function bracketCenter(m, cx, cy, r) {
   // known yet — never label the two (still-empty) sides "Match 1"/"Match 2"
   // the way an undecided wedge elsewhere shows no text at all. Only show a
   // finalist's flag once that side has actually resolved to a real team.
+  const side = (real, inner, gray) => !real ? '' : gray ? `<g class="bteam-dim">${inner}</g>` : inner;
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--card2)" stroke="var(--line)"></circle>
-    ${a.real ? flagBadge(m.teamA, teamByCode(m.teamA), cx - r * 0.36, cy - r * 0.3, r * 0.34) : ''}
-    ${b.real ? flagBadge(m.teamB, teamByCode(m.teamB), cx + r * 0.36, cy - r * 0.3, r * 0.34) : ''}
-    ${a.real ? radialLabel(a.name, cx - r * 0.36, cy + r * 0.32, 0, r * 0.66, 8, outA ? 'bwedge-out-text' : '') : ''}
-    ${b.real ? radialLabel(b.name, cx + r * 0.36, cy + r * 0.32, 0, r * 0.66, 8, outB ? 'bwedge-out-text' : '') : ''}
+    ${side(a.real, flagBadge(m.teamA, teamByCode(m.teamA), cx - r * 0.36, cy - r * 0.3, r * 0.34)
+      + radialLabel(a.name, cx - r * 0.36, cy + r * 0.32, 0, r * 0.66, 8, outA ? 'bwedge-out-text' : ''), grayA)}
+    ${side(b.real, flagBadge(m.teamB, teamByCode(m.teamB), cx + r * 0.36, cy - r * 0.3, r * 0.34)
+      + radialLabel(b.name, cx + r * 0.36, cy + r * 0.32, 0, r * 0.66, 8, outB ? 'bwedge-out-text' : ''), grayB)}
     <text x="${cx}" y="${cy + r * 0.62}" text-anchor="middle" font-size="9" class="bcenter-label">FINAL</text>
   </g>`;
 }
@@ -1243,7 +1260,7 @@ function bracketThird(m, cx, cy, centerR) {
   const y = cy + centerR + 32;
   const nodeR = 10;
 
-  const node = (x, t, code, out, isWinner) => {
+  const node = (x, t, code, out, isWinner, gray) => {
     const resultCls = decided ? (isWinner ? ' bnode-win' : ' bnode-loss') : '';
     let html = `<circle class="bnode${resultCls}${!t.real ? ' bnode-tbd' : ''}" cx="${x.toFixed(2)}" cy="${y}" r="${nodeR}"></circle>`;
     if (t.real) {
@@ -1253,13 +1270,18 @@ function bracketThird(m, cx, cy, centerR) {
       if (own) lines.push([own.name, 6, `bwedge-coach${own.isMe ? ' me' : ''}`]);
       html += radialLabelStack(lines, x, y + nodeR + 8, 0, 54);
     }
-    return html;
+    return gray ? `<g class="bteam-dim">${html}</g>` : html;
   };
 
-  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${bracketDimmed(m, a, b) ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+  const hl = bracketHighlightCodes;
+  const groupDim = bracketDimmed(m, a, b);
+  const grayA = !!(hl && !groupDim && !(a.real && hl.has(m.teamA)));
+  const grayB = !!(hl && !groupDim && !(b.real && hl.has(m.teamB)));
+
+  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${groupDim ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     <text class="bring-title" x="${cx}" y="${y - nodeR - 12}" text-anchor="middle" dominant-baseline="central" font-size="8">🥉 3RD PLACE</text>
-    ${node(cx - 32, a, m.teamA, outA, winnerSide === 'A')}
-    ${node(cx + 32, b, m.teamB, outB, winnerSide === 'B')}
+    ${node(cx - 32, a, m.teamA, outA, winnerSide === 'A', grayA)}
+    ${node(cx + 32, b, m.teamB, outB, winnerSide === 'B', grayB)}
     ${junctionPill(cx, y, m, a.real && b.real)}
   </g>`;
 }
