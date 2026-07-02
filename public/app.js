@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=30';
-import { flagSVG } from '/flags.js?v=30';
+import { playAnnouncement } from '/announce.js?v=31';
+import { flagSVG } from '/flags.js?v=31';
 
 const $app = document.getElementById('app');
 
@@ -953,15 +953,24 @@ function elbowConnector(cx, cy, rChild, aA, aB, rParent, winnerSide) {
     <line class="${lineCls}" x1="${xM.toFixed(2)}" y1="${yM.toFixed(2)}" x2="${xP.toFixed(2)}" y2="${yP.toFixed(2)}"></line>`;
 }
 
-// Post-process flagSVG's standalone <svg viewBox="0 0 300 200">...</svg>
-// string into a circularly-clipped badge sized/positioned for one node —
-// real vector flag art instead of an emoji glyph, which some browsers (iOS
-// Safari confirmed) render as a blank placeholder box inside SVG <text>.
+// Render a team's flag as a true circle: a <circle> filled with a pattern
+// built from flagSVG's vector art. Real flag art instead of an emoji glyph,
+// which some browsers (iOS Safari confirmed) render as a blank placeholder
+// box inside SVG <text> — and a pattern-filled circle instead of a clipped
+// nested <svg>, because an objectBoundingBox clip-path on a nested svg
+// resolves against its 300x200 viewBox coordinate system and squashes the
+// "circle" into a 3:2 ellipse. The circle element's own geometry can't be
+// anything but round. One shared <pattern> def per team code, collected in
+// bracketFlagDefs during a render pass and emitted once into the wheel's
+// <defs>.
+let bracketFlagDefs = null;
 function flagBadge(code, team, cx, cy, r) {
-  const raw = flagSVG(code, team);
-  const inner = raw.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
-  const size = (r * 2).toFixed(2);
-  return `<svg x="${(cx - r).toFixed(2)}" y="${(cy - r).toFixed(2)}" width="${size}" height="${size}" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice" clip-path="url(#bcircleclip)">${inner}</svg>`;
+  if (bracketFlagDefs && !bracketFlagDefs.has(code)) {
+    const raw = flagSVG(code, team || teamByCode(code));
+    const inner = raw.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
+    bracketFlagDefs.set(code, `<pattern id="bflag-${esc(code)}" width="1" height="1" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">${inner}</pattern>`);
+  }
+  return `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="url(#bflag-${esc(code)})"></circle>`;
 }
 
 function renderBracketWheel(ringStages, byStage, finalMatch) {
@@ -970,6 +979,7 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
   const ringCount = Math.max(ringStages.length, 1);
   const step = (OUTER_R - CENTER_R) / ringCount;
 
+  bracketFlagDefs = new Map(); // flagBadge() fills this as nodes render
   let nodes = '', titles = '';
   ringStages.forEach((stage, ri) => {
     const matches = byStage[stage];
@@ -994,8 +1004,14 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
     <circle cx="${CX}" cy="${CY}" r="${CENTER_R}" fill="var(--card2)" stroke="var(--line)" />
     <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="22">🏆</text>`;
 
+  // defs materialized last — flagBadge() registers a pattern per team code
+  // while nodes/centerContent render above (defs placement in the output
+  // doesn't matter to SVG).
+  const defs = `<defs>${[...bracketFlagDefs.values()].join('')}</defs>`;
+  bracketFlagDefs = null;
+
   return `<svg viewBox="0 0 ${SIZE} ${SIZE}" class="bracket-wheel" xmlns="http://www.w3.org/2000/svg">
-    <defs><clipPath id="bcircleclip" clipPathUnits="objectBoundingBox"><circle cx=".5" cy=".5" r=".5"></circle></clipPath></defs>
+    ${defs}
     ${nodes}
     ${centerContent}
     ${titles}
@@ -1036,18 +1052,23 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
     const resultCls = decided ? (isWinner ? ' bnode-win' : ' bnode-loss') : '';
     let html = `<circle class="bnode${resultCls}${!t.real ? ' bnode-tbd' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`;
     if (t.real) {
-      // Flag fills the node circle exactly (matches the win/loss ring drawn
-      // around it, rather than floating as a smaller inset). The label
-      // block starts clear of the flag's edge and runs inward, on its own
-      // rotation — team name then coach as two lines stacked in the text's
-      // own local frame (see radialLabelStack), so they never collide with
-      // the flag or each other and are never upside down.
-      html += flagBadge(code, teamByCode(code), dx, dy, dotR);
+      // Flag fills the node circle (inset just enough to keep the win/loss
+      // ring stroke visible all the way around). The label block runs
+      // inward on its own rotation — team name then coach as two lines
+      // stacked in the text's own local frame (see radialLabelStack), so
+      // they never collide with each other and are never upside down. The
+      // stack's pivot is placed so the label's *near end* sits at `gap`
+      // from the node centre: text-anchor is middle, so a centred pivot
+      // must back off by half the actual rendered width or long names
+      // would extend back over the flag.
+      html += flagBadge(code, teamByCode(code), dx, dy, dotR - 1.5);
       const deg = radialDeg(angle);
-      const gap = dotR + 6;
-      const availLen = Math.max(20, annulus - gap - fontSize - 10);
-      const nameR = rRing - gap - fontSize * 0.5;
-      const [nx, ny] = polar(cx, cy, nameR, angle);
+      const gap = dotR + 5;
+      const availLen = Math.max(20, annulus - gap - 10);
+      const estName = t.name.length * fontSize * 0.56;
+      const estCoach = own ? own.name.length * coachFontSize * 0.56 : 0;
+      const span = Math.min(Math.max(estName, estCoach), availLen);
+      const [nx, ny] = polar(cx, cy, rRing - gap - span / 2, angle);
       const lines = [[t.name, fontSize, out ? 'bwedge-out-text' : '']];
       if (own) lines.push([own.name, coachFontSize, `bwedge-coach${own.isMe ? ' me' : ''}`]);
       html += radialLabelStack(lines, nx, ny, deg, availLen);

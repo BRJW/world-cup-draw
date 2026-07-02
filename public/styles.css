@@ -296,8 +296,8 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .bwedge { cursor: pointer; }
 .bnode { fill: var(--card2); stroke: var(--line); stroke-width: 2; transition: fill .15s, stroke .15s; }
 .bwedge:active .bnode { fill: var(--card); }
-.bnode.bnode-win { fill: rgba(95,201,138,.3); stroke: var(--win); }
-.bnode.bnode-loss { fill: rgba(236,101,119,.16); stroke: var(--danger); opacity: .6; }
+.bnode.bnode-win { fill: rgba(95,201,138,.3); stroke: var(--win); stroke-width: 2.5; }
+.bnode.bnode-loss { fill: rgba(236,101,119,.16); stroke: var(--danger); stroke-width: 2.5; opacity: .6; }
 .bnode.bnode-tbd { fill: none; stroke: var(--line-soft); stroke-dasharray: 2 2; }
 .bwedge-live .bnode { fill: rgba(240,96,111,.28); stroke: var(--live); }
 .bwedge-selected .bnode { stroke: var(--accent); stroke-width: 2.5; }
