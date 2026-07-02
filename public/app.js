@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=31';
-import { flagSVG } from '/flags.js?v=31';
+import { playAnnouncement } from '/announce.js?v=32';
+import { flagSVG } from '/flags.js?v=32';
 
 const $app = document.getElementById('app');
 
@@ -97,7 +97,10 @@ socket.on('state', (state) => {
   if (state.event === 'pick' && state.pick) animateReveal(state.pick);
   else render();
 });
-socket.on('matches-updated', () => { if (S.tab === 'scores' || S.tab === 'standings') refreshAux(); });
+socket.on('matches-updated', () => {
+  // re-render so live scores propagate to whichever match view is open
+  if (['scores', 'standings', 'bracket'].includes(S.tab)) refreshAux().then(render);
+});
 
 function joinRoom(poolId) {
   if (joinedPoolId === poolId) return;
@@ -245,7 +248,9 @@ async function summarizePool(poolId, m) {
 async function refreshAux() {
   if (!S.pool) return;
   try {
-    if (S.tab === 'standings' || S.tab === 'teams') {
+    // bracket needs the leaderboard too — its coach filter reads each
+    // team's alive/out status off the leaderboard rows
+    if (S.tab === 'standings' || S.tab === 'teams' || S.tab === 'bracket') {
       const lb = await api(`/api/pools/${S.pool.id}/leaderboard`);
       S.leaderboard = lb.leaderboard; S.byPlayer = lb.byPlayer;
     }
@@ -744,7 +749,9 @@ const BRACKET_ORDER = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-fina
 // exactly under the inner wedge they feed (equal angular division per ring).
 const BRACKET_FLOW = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Final'];
 
-let bracketSelectedId = null; // id of the match shown in the detail panel (cleared on tab-entry)
+let bracketSelectedId = null;   // id of the match shown in the detail panel (cleared on tab-entry)
+let bracketCoachFilter = null;  // playerId to spotlight (cleared on tab-entry)
+let bracketHighlightCodes = null; // Set of team codes kept at full strength while filtering
 
 const byKickoff = (a, b) => new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
 
@@ -849,17 +856,36 @@ function renderBracketTab() {
   const ringStages = BRACKET_FLOW.slice(0, -1).filter((s) => byStage[s]?.length);
   const finalMatch = byStage['Final']?.[0] || null;
 
+  // Coach spotlight: while a coach is selected, only matches involving one
+  // of their still-remaining teams stay at full strength — everything else
+  // dims. "Remaining" comes from the leaderboard's per-team alive/out
+  // status, so a team knocked out in a later round dims its earlier
+  // (winning) nodes too.
+  bracketHighlightCodes = null;
+  if (bracketCoachFilter) {
+    const row = S.leaderboard.find((r) => r.playerId === bracketCoachFilter);
+    if (row) bracketHighlightCodes = new Set(row.teams.filter((t) => t.status === 'alive').map((t) => t.code));
+    else bracketCoachFilter = null; // player gone / leaderboard not loaded — fail open
+  }
+
   const svg = renderBracketWheel(ringStages, byStage, finalMatch);
   // No default selection — showing an arbitrary match's detail card before
   // the user has tapped anything just reads as random. Live matches are
   // already highlighted directly on the wheel (see .bwedge-live).
   const selected = knockouts.find((m) => m.id === bracketSelectedId);
 
+  const coaches = S.players.filter((pl) => S.picks.some((p) => p.playerId === pl.id));
+  const filterRow = coaches.length ? `<div class="card bfilter">
+    <button class="${!bracketCoachFilter ? 'active' : ''}" data-action="bracket-coach" data-id="">All</button>
+    ${coaches.map((pl) => `<button class="${bracketCoachFilter === pl.id ? 'active' : ''}" data-action="bracket-coach" data-id="${pl.id}">${esc(pl.name.split(' ')[0])}</button>`).join('')}
+  </div>` : '';
+
   return `<div class="card">
     <h2>Bracket</h2>
     <p class="sub">Tap any match on the wheel — outer ring is Round of 32, working in to the Final.</p>
   </div>
   <div class="card bracket-wheel-card">${svg}</div>
+  ${filterRow}
   ${selected ? renderBracketDetail(selected) : ''}
   ${third ? renderThirdPlaceNote(third) : ''}`;
 }
@@ -1076,10 +1102,33 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
     return html;
   };
 
-  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+  // The score sits in a small pill exactly at the juncture where the two
+  // teams' branches meet (order matches the nodes: left number = first
+  // team clockwise). Shown for live and finished matches alike — the wheel
+  // re-renders on every live sync, so an in-play score ticks up in place.
+  let scorePill = '';
+  if (m.scoreA != null && m.scoreB != null) {
+    const [jx, jy] = polar(cx, cy, rRing, (aA + aB) / 2);
+    const txt = `${m.scoreA}–${m.scoreB}`;
+    const fs = 8.5;
+    const w = txt.length * fs * 0.62 + 8, h = 13;
+    scorePill = `<g class="bscore">
+      <rect x="${(jx - w / 2).toFixed(2)}" y="${(jy - h / 2).toFixed(2)}" width="${w.toFixed(2)}" height="${h}" rx="${h / 2}"></rect>
+      <text x="${jx.toFixed(2)}" y="${(jy + 0.5).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fs}">${esc(txt)}</text>
+    </g>`;
+  }
+
+  // Coach spotlight: dim any match that doesn't involve one of the
+  // filtered coach's still-remaining teams (the opponent in a relevant
+  // match stays visible — you want to see who they're up against).
+  const hl = bracketHighlightCodes;
+  const dimmed = hl && !((a.real && hl.has(m.teamA)) || (b.real && hl.has(m.teamB)));
+
+  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${dimmed ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     ${elbowConnector(cx, cy, rRing, aA, aB, rNext, winnerSide)}
     ${team(aA, a, m.teamA, outA, ownA, winnerSide === 'A')}
     ${team(aB, b, m.teamB, outB, ownB, winnerSide === 'B')}
+    ${scorePill}
   </g>`;
 }
 
@@ -1230,7 +1279,7 @@ function ownerInfo(code) {
   if (!pick) return null;
   const pl = S.players.find((p) => p.id === pick.playerId);
   if (!pl) return null;
-  return { name: pl.name.split(' ')[0], isMe: pl.id === S.me?.id };
+  return { id: pl.id, name: pl.name.split(' ')[0], isMe: pl.id === S.me?.id };
 }
 
 function matchRow(m) {
@@ -1412,11 +1461,13 @@ const actions = {
 
   tab(el) {
     const next = el.dataset.tab;
-    if (next !== S.tab) { scoresAutoScrolled = false; bracketSelectedId = null; }
+    if (next !== S.tab) { scoresAutoScrolled = false; bracketSelectedId = null; bracketCoachFilter = null; }
     S.tab = next; S.error = ''; refreshAux().then(render); render();
   },
 
   'select-bracket-match'(el) { bracketSelectedId = el.dataset.id; render(); },
+
+  'bracket-coach'(el) { bracketCoachFilter = el.dataset.id || null; render(); },
 
   'copy-code'() { copy(S.pool.joinCode); toast('Code copied'); },
   'copy-link'() { copy(poolUrl(S.pool.joinCode)); toast('Invite link copied'); },
