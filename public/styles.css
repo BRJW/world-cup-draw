@@ -295,12 +295,12 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .bnode { fill: var(--card2); stroke: var(--line); stroke-width: 1.5; transition: fill .15s, stroke .15s; }
 .bwedge:active .bnode { fill: var(--card); }
 .bnode.bnode-out { fill: rgba(152,161,189,.1); opacity: .55; }
+.bnode.bnode-tbd { fill: none; stroke: var(--line-soft); stroke-dasharray: 2 2; }
 .bwedge-live .bnode { fill: rgba(240,96,111,.28); stroke: var(--live); }
 .bwedge-selected .bnode { fill: rgba(233,196,106,.3); stroke: var(--accent); }
 .bwedge text { fill: var(--txt); pointer-events: none; font-weight: 600; font-family: inherit; }
 .bwedge text.bwedge-out-text { opacity: .4; text-decoration: line-through; }
-.bwedge text.bwedge-coach { fill: var(--muted2); font-weight: 600; }
-.bwedge text.bwedge-coach.me { fill: var(--accent); }
+.bwedge text.bwedge-mine { fill: var(--accent); }
 .bcenter-final { fill: rgba(233,196,106,.16); stroke: var(--accent); stroke-width: 2; }
 .bcenter-label { fill: var(--muted); font-weight: 800; letter-spacing: 1px; }
 .bcenter-name { fill: var(--txt); font-weight: 700; }

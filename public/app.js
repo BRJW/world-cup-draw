@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=27';
+import { playAnnouncement } from '/announce.js?v=28';
 
 const $app = document.getElementById('app');
 
@@ -967,8 +967,6 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
 // branches) rather than a pie/donut chart.
 function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
-  const nameA = a.real ? a.name : shortenPlaceholder(a.name);
-  const nameB = b.real ? b.name : shortenPlaceholder(b.name);
   const { outA, outB, live } = bracketOutcome(m);
   const ownA = a.real ? ownerInfo(m.teamA) : null;
   const ownB = b.real ? ownerInfo(m.teamB) : null;
@@ -977,28 +975,33 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
   const annulus = rRing - rNext;
   const teamSpanRad = (aB - aA) / 2; // each team's own angular allocation
   const fontSize = Math.min(12, Math.max(8, teamSpanRad * rRing * 0.6));
-  const coachFontSize = Math.max(6.5, fontSize - 3);
   const dotR = Math.min(7, Math.max(3.5, teamSpanRad * rRing * 0.28));
 
-  const team = (angle, name, flag, out, own) => {
+  // Undecided placeholder slots ("Round of 32 8 Winner") get a bare node —
+  // no text at all, not even "Match 8". There's nothing useful to say about
+  // a slot until it actually resolves to a team, and a whole ring of
+  // "Match N" labels was just noise. A real team always gets one single
+  // line combining name + coach (never two stacked lines): once every slot
+  // in a fully-drafted 12-player pool has a coach, two separate radial
+  // labels per team had nowhere to go but on top of each other.
+  const team = (angle, t, out, own) => {
     const [dx, dy] = polar(cx, cy, rRing, angle);
-    const deg = radialDeg(angle);
-    const nameR = rRing - annulus * (own ? 0.42 : 0.32);
-    const availLen = annulus * (own ? 0.42 : 0.58);
-    const [nx, ny] = polar(cx, cy, nameR, angle);
-    let html = `<circle class="bnode${out ? ' bnode-out' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`
-      + radialLabel(`${flag} ${name}`, nx, ny, deg, availLen, fontSize, out ? 'bwedge-out-text' : '');
-    if (own) {
-      const [ox, oy] = polar(cx, cy, rRing - annulus * 0.74, angle);
-      html += radialLabel(own.name, ox, oy, deg, annulus * 0.32, coachFontSize, `bwedge-coach${own.isMe ? ' me' : ''}`);
+    let html = `<circle class="bnode${out ? ' bnode-out' : ''}${!t.real ? ' bnode-tbd' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`;
+    if (t.real) {
+      const deg = radialDeg(angle);
+      const nameR = rRing - annulus * 0.4;
+      const availLen = annulus * 0.62;
+      const [nx, ny] = polar(cx, cy, nameR, angle);
+      const label = own ? `${t.flag} ${t.name} — ${own.name}` : `${t.flag} ${t.name}`;
+      html += radialLabel(label, nx, ny, deg, availLen, fontSize, `${out ? 'bwedge-out-text' : ''}${own?.isMe ? ' bwedge-mine' : ''}`);
     }
     return html;
   };
 
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     ${elbowConnector(cx, cy, rRing, aA, aB, rNext)}
-    ${team(aA, nameA, a.flag, outA, ownA)}
-    ${team(aB, nameB, b.flag, outB, ownB)}
+    ${team(aA, a, outA, ownA)}
+    ${team(aB, b, outB, ownB)}
   </g>`;
 }
 
