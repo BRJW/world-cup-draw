@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=34';
-import { flagSVG } from '/flags.js?v=34';
+import { playAnnouncement } from '/announce.js?v=35';
+import { flagSVG } from '/flags.js?v=35';
 
 const $app = document.getElementById('app');
 
@@ -753,57 +753,69 @@ let bracketHighlightCodes = null; // Set of team codes kept at full strength whi
 
 const byKickoff = (a, b) => new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
 
-// Which 2 matches in `src` feed match `m`? A resolved side matches by its real
-// team code; an unresolved side is a ESPN placeholder like "Round of 32 8
-// Winner" / "Quarterfinal 2 Winner" — the trailing number is a stable 1-based
-// reference into `src`'s own canonical order (see reconcileBracketOrder).
-function bracketSourceIndices(m, src) {
-  const idxs = new Set();
-  for (const [code, name] of [[m.teamA, m.teamAName], [m.teamB, m.teamBName]]) {
-    const bySame = src.findIndex((s) => s.teamA === code || s.teamB === code);
-    if (bySame >= 0) { idxs.add(bySame); continue; }
-    const mm = /(\d+)\s*winner\s*$/i.exec(name || '');
-    if (mm) idxs.add(Number(mm[1]) - 1);
-  }
-  return [...idxs];
-}
-
-// Reorders every round so that real bracket pairs sit adjacent to one another
-// (rather than just chronological kickoff order), which is what lets the
-// connector math below draw lines that actually mean something. Falls back to
-// plain kickoff order for a stage-pair whenever reconciliation can't cleanly
-// account for every match (e.g. incomplete data) — connectors just won't be
-// drawn between those two columns in that case.
+// Reconstruct the real bracket order for every round so that each match sits
+// directly inward of the two it feeds from — the inner match at position j
+// draws its feeders from outer positions 2j (its teamA side) and 2j+1 (its
+// teamB side). Kickoff order alone doesn't give this (the World Cup bracket
+// pairs winners non-consecutively, e.g. R32 match 13 vs 15), and reconciling
+// round-by-round can scramble an already-aligned round when the next one in
+// gets ordered. So instead we build the whole tree once and read it off in a
+// single consistent traversal:
+//
+//   1. Link every inner match to its two feeder MATCHES in the round outside
+//      it. A resolved side (a real team) claims the specific match that team
+//      won; a still-abstract side ("Round of 32 8 Winner") claims whatever
+//      outer matches are left over, in order — exact identity doesn't matter
+//      for an unresolved slot, only that the counts balance.
+//   2. DFS from the Final outward, teamA-subtree before teamB-subtree. A
+//      preorder walk of this balanced tree emits each round left-to-right,
+//      which is exactly the 2j / 2j+1 adjacency the wheel geometry needs, and
+//      keeps every team's node directly above the match it came from.
+//
+// Falls back to plain kickoff order for any round that can't be fully built
+// (e.g. a partially-synced schedule) rather than drawing crossed wires.
 function reconcileBracketOrder(byStage) {
-  const ordered = { 'Round of 32': [...(byStage['Round of 32'] || [])].sort(byKickoff) };
-  for (let i = 1; i < BRACKET_FLOW.length; i++) {
-    const srcStage = BRACKET_FLOW[i - 1], curStage = BRACKET_FLOW[i];
-    const src = ordered[srcStage] || [];
-    const curRaw = byStage[curStage] ? [...byStage[curStage]].sort(byKickoff) : [];
-    if (!curRaw.length) continue;
+  const canon = {};
+  for (const s of BRACKET_FLOW) canon[s] = byStage[s] ? [...byStage[s]].sort(byKickoff) : [];
 
-    const used = new Set();
-    const known = [], unknown = [];
-    for (const m of curRaw) {
-      const idxs = bracketSourceIndices(m, src).filter((i) => !used.has(i));
-      if (idxs.length === 2) {
-        idxs.sort((a, b) => a - b);
-        used.add(idxs[0]); used.add(idxs[1]);
-        known.push({ m, lo: idxs[0], hi: idxs[1] });
-      } else unknown.push(m);
+  const feeders = new Map(); // inner match -> [feederA, feederB]
+  for (let i = BRACKET_FLOW.length - 1; i >= 1; i--) {
+    const inner = canon[BRACKET_FLOW[i]], outer = canon[BRACKET_FLOW[i - 1]];
+    if (!inner.length || !outer.length) continue;
+    const claimed = new Set();
+    const claimReal = (code) => {
+      if (!code || !teamByCode(code)) return null; // placeholder / unresolved
+      const f = outer.find((o) => !claimed.has(o) && (o.teamA === code || o.teamB === code));
+      if (f) { claimed.add(f); return f; }
+      return null;
+    };
+    // Resolve all real sides first (they need specific matches), then hand the
+    // leftovers to the abstract sides.
+    const linkA = new Map(), linkB = new Map();
+    for (const m of inner) { const f = claimReal(m.teamA); if (f) linkA.set(m, f); }
+    for (const m of inner) { const f = claimReal(m.teamB); if (f) linkB.set(m, f); }
+    const leftover = outer.filter((o) => !claimed.has(o)); let li = 0;
+    for (const m of inner) {
+      let fA = linkA.get(m) || null, fB = linkB.get(m) || null;
+      if (!fA) fA = leftover[li++] || null;
+      if (!fB) fB = leftover[li++] || null;
+      feeders.set(m, [fA, fB]);
     }
-    known.sort((a, b) => a.lo - b.lo);
-
-    const newSrc = [], newCur = [];
-    for (const kp of known) { newSrc.push(src[kp.lo], src[kp.hi]); newCur.push(kp.m); }
-    const leftover = src.filter((_, si) => !used.has(si));
-    for (let k = 0; k < leftover.length; k += 2) newSrc.push(leftover[k], leftover[k + 1]);
-    newCur.push(...unknown);
-
-    const cleanSrc = newSrc.filter(Boolean);
-    if (cleanSrc.length === src.length) { ordered[srcStage] = cleanSrc; ordered[curStage] = newCur; }
-    else { ordered[srcStage] = src; ordered[curStage] = curRaw; } // couldn't fully reconcile -- keep kickoff order
   }
+
+  const ordered = {}; for (const s of BRACKET_FLOW) ordered[s] = [];
+  let anchor = BRACKET_FLOW.length - 1; // innermost non-empty round
+  while (anchor > 0 && !canon[BRACKET_FLOW[anchor]].length) anchor--;
+  const walk = (m, i) => {
+    ordered[BRACKET_FLOW[i]].push(m);
+    if (i === 0) return;
+    const [fA, fB] = feeders.get(m) || [];
+    if (fA) walk(fA, i - 1);
+    if (fB) walk(fB, i - 1);
+  };
+  for (const m of canon[BRACKET_FLOW[anchor]]) walk(m, anchor);
+  // Any round the walk didn't fully populate (incomplete data) -> kickoff order.
+  for (const s of BRACKET_FLOW) if (ordered[s].length !== canon[s].length) ordered[s] = canon[s];
   return ordered;
 }
 
