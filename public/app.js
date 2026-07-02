@@ -1,7 +1,7 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=26';
+import { playAnnouncement } from '/announce.js?v=27';
 
 const $app = document.getElementById('app');
 
@@ -743,8 +743,7 @@ const BRACKET_ORDER = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-fina
 // exactly under the inner wedge they feed (equal angular division per ring).
 const BRACKET_FLOW = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Final'];
 
-let bracketAutoSelected = false; // reset whenever the Bracket tab is (re-)entered
-let bracketSelectedId = null;    // id of the match shown in the detail panel
+let bracketSelectedId = null; // id of the match shown in the detail panel (cleared on tab-entry)
 
 const byKickoff = (a, b) => new Date(a.kickoff || 0) - new Date(b.kickoff || 0);
 
@@ -833,15 +832,6 @@ function bracketOutcome(m) {
 
 const TAU = Math.PI * 2;
 const polar = (cx, cy, r, a) => [cx + r * Math.sin(a), cy - r * Math.cos(a)];
-// Annulus-sector path: the standard donut/pie-slice wedge shape between two
-// radii and two angles (radians, 0 = 12 o'clock, clockwise).
-function arcPath(cx, cy, rInner, rOuter, a0, a1) {
-  const large = (a1 - a0) > Math.PI ? 1 : 0;
-  const [x1, y1] = polar(cx, cy, rOuter, a0), [x2, y2] = polar(cx, cy, rOuter, a1);
-  const [x3, y3] = polar(cx, cy, rInner, a1), [x4, y4] = polar(cx, cy, rInner, a0);
-  return `M${x1.toFixed(2)},${y1.toFixed(2)} A${rOuter.toFixed(2)},${rOuter.toFixed(2)} 0 ${large} 1 ${x2.toFixed(2)},${y2.toFixed(2)} `
-    + `L${x3.toFixed(2)},${y3.toFixed(2)} A${rInner.toFixed(2)},${rInner.toFixed(2)} 0 ${large} 0 ${x4.toFixed(2)},${y4.toFixed(2)} Z`;
-}
 
 function renderBracketTab() {
   const knockouts = S.matches.filter((m) => BRACKET_ORDER.includes(m.stage));
@@ -858,15 +848,10 @@ function renderBracketTab() {
   const ringStages = BRACKET_FLOW.slice(0, -1).filter((s) => byStage[s]?.length);
   const finalMatch = byStage['Final']?.[0] || null;
 
-  if (!bracketAutoSelected) {
-    bracketAutoSelected = true;
-    const allFlow = [...ringStages, ...(finalMatch ? ['Final'] : [])];
-    const targetStage = allFlow.find((s) => byStage[s].some((m) => !isMatchFinal(m))) || allFlow[allFlow.length - 1];
-    const pool = byStage[targetStage] || [];
-    bracketSelectedId = (pool.find((m) => !isMatchFinal(m)) || pool[pool.length - 1])?.id || null;
-  }
-
   const svg = renderBracketWheel(ringStages, byStage, finalMatch);
+  // No default selection — showing an arbitrary match's detail card before
+  // the user has tapped anything just reads as random. Live matches are
+  // already highlighted directly on the wheel (see .bwedge-live).
   const selected = knockouts.find((m) => m.id === bracketSelectedId);
 
   return `<div class="card">
@@ -922,28 +907,45 @@ const WHEEL_GAP_RAD = (13 * Math.PI) / 180;
 const WHEEL_USABLE_RAD = TAU - WHEEL_GAP_RAD;
 const wheelAngleAt = (i, n) => WHEEL_GAP_RAD / 2 + (i / n) * WHEEL_USABLE_RAD;
 
-function renderBracketWheel(ringStages, byStage, finalMatch) {
-  const SIZE = 620, CX = SIZE / 2, CY = SIZE / 2;
-  const OUTER_R = SIZE / 2 - 16, CENTER_R = 64;
-  const ringCount = Math.max(ringStages.length, 1);
-  const thickness = (OUTER_R - CENTER_R) / ringCount;
+// A standard tournament bracket's elbow connector (two right-angle turns
+// joining a pair of entrants to the match they feed) bent into polar space:
+// an arc at the child ring's own radius sweeping from each team's angle to
+// their shared midpoint, then one radial line inward to the next node.
+function elbowConnector(cx, cy, rChild, aA, aB, rParent) {
+  const aMid = (aA + aB) / 2;
+  const [xA, yA] = polar(cx, cy, rChild, aA);
+  const [xB, yB] = polar(cx, cy, rChild, aB);
+  const [xM, yM] = polar(cx, cy, rChild, aMid);
+  const [xP, yP] = polar(cx, cy, rParent, aMid);
+  const arc = (x1, y1, x2, y2) => `M${x1.toFixed(2)},${y1.toFixed(2)} A${rChild.toFixed(2)},${rChild.toFixed(2)} 0 0,1 ${x2.toFixed(2)},${y2.toFixed(2)}`;
+  return `<path class="belbow" d="${arc(xA, yA, xM, yM)}"></path>
+    <path class="belbow" d="${arc(xM, yM, xB, yB)}"></path>
+    <line class="belbow" x1="${xM.toFixed(2)}" y1="${yM.toFixed(2)}" x2="${xP.toFixed(2)}" y2="${yP.toFixed(2)}"></line>`;
+}
 
-  let wires = '', wedges = '', titles = '';
+function renderBracketWheel(ringStages, byStage, finalMatch) {
+  const SIZE = 640, CX = SIZE / 2, CY = SIZE / 2;
+  const OUTER_R = SIZE / 2 - 20, CENTER_R = 42;
+  const ringCount = Math.max(ringStages.length, 1);
+  const step = (OUTER_R - CENTER_R) / ringCount;
+
+  let nodes = '', titles = '';
   ringStages.forEach((stage, ri) => {
     const matches = byStage[stage];
-    const rOuter = OUTER_R - ri * thickness;
-    const rInner = rOuter - thickness;
-    const nextROuter = ri + 1 < ringCount ? OUTER_R - (ri + 1) * thickness : CENTER_R;
+    const rRing = OUTER_R - ri * step;
+    const rNext = ri + 1 < ringCount ? OUTER_R - (ri + 1) * step : CENTER_R;
     const n = matches.length;
     matches.forEach((m, i) => {
-      const a0 = wheelAngleAt(i, n), a1 = wheelAngleAt(i + 1, n);
-      wedges += bracketWedge(m, CX, CY, rInner, rOuter, a0, a1);
-      const aMid = (a0 + a1) / 2;
-      const [wx1, wy1] = polar(CX, CY, rInner, aMid);
-      const [wx2, wy2] = polar(CX, CY, nextROuter, aMid);
-      wires += `<line class="bwire" x1="${wx1.toFixed(2)}" y1="${wy1.toFixed(2)}" x2="${wx2.toFixed(2)}" y2="${wy2.toFixed(2)}"></line>`;
+      const cell0 = wheelAngleAt(i, n), cell1 = wheelAngleAt(i + 1, n);
+      const aMid = (cell0 + cell1) / 2;
+      // teams sit at the midpoint of their own half of the match's cell —
+      // never at cell0/cell1 themselves, which are shared with the
+      // neighbouring match and would otherwise put two teams' dots in
+      // the same spot.
+      const aA = (cell0 + aMid) / 2, aB = (aMid + cell1) / 2;
+      nodes += bracketNode(m, CX, CY, rRing, rNext, aA, aB);
     });
-    const [tx, ty] = polar(CX, CY, (rInner + rOuter) / 2, 0);
+    const [tx, ty] = polar(CX, CY, rRing, 0);
     titles += `<text class="bring-title" x="${tx.toFixed(2)}" y="${ty.toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="9">${esc(RING_TITLES[stage] || stage)}</text>`;
   });
 
@@ -952,52 +954,51 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
     <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="22">🏆</text>`;
 
   return `<svg viewBox="0 0 ${SIZE} ${SIZE}" class="bracket-wheel" xmlns="http://www.w3.org/2000/svg">
-    ${wires}
-    ${wedges}
+    ${nodes}
     ${centerContent}
     ${titles}
   </svg>`;
 }
 
-// Each match splits its wedge into two side-by-side angular slices (not
-// radially stacked bands) so both teams get the FULL ring thickness to
-// write a name + coach along the spoke, instead of squeezing two teams'
-// worth of text into half the radial space each.
-function bracketWedge(m, cx, cy, rInner, rOuter, a0, a1) {
+// A match is two small flag-circle nodes (one per team, like leaves of a
+// tree) plus the elbow connector feeding their winner into the next ring in
+// — name + coach written into the annulus toward the centre. No filled
+// wedge background, so the ring reads as a bracket diagram (dots and
+// branches) rather than a pie/donut chart.
+function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
   const nameA = a.real ? a.name : shortenPlaceholder(a.name);
   const nameB = b.real ? b.name : shortenPlaceholder(b.name);
   const { outA, outB, live } = bracketOutcome(m);
   const ownA = a.real ? ownerInfo(m.teamA) : null;
   const ownB = b.real ? ownerInfo(m.teamB) : null;
-  const aMid = (a0 + a1) / 2;
-  const sliceA = arcPath(cx, cy, rInner, rOuter, a0, aMid);
-  const sliceB = arcPath(cx, cy, rInner, rOuter, aMid, a1);
   const selected = m.id === bracketSelectedId;
 
-  const teamSpanRad = aMid - a0; // == a1 - aMid
-  const fontSize = Math.min(13, Math.max(8, teamSpanRad * ((rInner + rOuter) / 2) * 0.55));
+  const annulus = rRing - rNext;
+  const teamSpanRad = (aB - aA) / 2; // each team's own angular allocation
+  const fontSize = Math.min(12, Math.max(8, teamSpanRad * rRing * 0.6));
   const coachFontSize = Math.max(6.5, fontSize - 3);
+  const dotR = Math.min(7, Math.max(3.5, teamSpanRad * rRing * 0.28));
 
-  const teamLabels = (slice0, slice1, name, out, own) => {
-    const mid = (slice0 + slice1) / 2;
-    const deg = radialDeg(mid);
-    const nameR = rInner + (rOuter - rInner) * (own ? 0.68 : 0.52);
-    const availLen = (rOuter - rInner) * (own ? 0.5 : 0.82);
-    const [nx, ny] = polar(cx, cy, nameR, mid);
-    let html = radialLabel(name, nx, ny, deg, availLen, fontSize, out ? 'bwedge-out-text' : '');
+  const team = (angle, name, flag, out, own) => {
+    const [dx, dy] = polar(cx, cy, rRing, angle);
+    const deg = radialDeg(angle);
+    const nameR = rRing - annulus * (own ? 0.42 : 0.32);
+    const availLen = annulus * (own ? 0.42 : 0.58);
+    const [nx, ny] = polar(cx, cy, nameR, angle);
+    let html = `<circle class="bnode${out ? ' bnode-out' : ''}" cx="${dx.toFixed(2)}" cy="${dy.toFixed(2)}" r="${dotR.toFixed(2)}"></circle>`
+      + radialLabel(`${flag} ${name}`, nx, ny, deg, availLen, fontSize, out ? 'bwedge-out-text' : '');
     if (own) {
-      const [ox, oy] = polar(cx, cy, rInner + (rOuter - rInner) * 0.22, mid);
-      html += radialLabel(own.name, ox, oy, deg, (rOuter - rInner) * 0.36, coachFontSize, `bwedge-coach${own.isMe ? ' me' : ''}`);
+      const [ox, oy] = polar(cx, cy, rRing - annulus * 0.74, angle);
+      html += radialLabel(own.name, ox, oy, deg, annulus * 0.32, coachFontSize, `bwedge-coach${own.isMe ? ' me' : ''}`);
     }
     return html;
   };
 
   return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
-    <path class="bwedge-band${outA ? ' bwedge-out' : ''}" d="${sliceA}"></path>
-    <path class="bwedge-band${outB ? ' bwedge-out' : ''}" d="${sliceB}"></path>
-    ${teamLabels(a0, aMid, `${a.flag} ${nameA}`, outA, ownA)}
-    ${teamLabels(aMid, a1, `${b.flag} ${nameB}`, outB, ownB)}
+    ${elbowConnector(cx, cy, rRing, aA, aB, rNext)}
+    ${team(aA, nameA, a.flag, outA, ownA)}
+    ${team(aB, nameB, b.flag, outB, ownB)}
   </g>`;
 }
 
@@ -1324,7 +1325,7 @@ const actions = {
 
   tab(el) {
     const next = el.dataset.tab;
-    if (next !== S.tab) { scoresAutoScrolled = false; bracketAutoSelected = false; }
+    if (next !== S.tab) { scoresAutoScrolled = false; bracketSelectedId = null; }
     S.tab = next; S.error = ''; refreshAux().then(render); render();
   },
 

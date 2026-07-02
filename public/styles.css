@@ -288,15 +288,15 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .match-edit input { width: 56px; padding: 8px; text-align: center; }
 .match-edit .btn-inline { margin: 0; }
 
-/* ---- bracket tab: radial knockout wheel + tap-to-expand detail card ---- */
+/* ---- bracket tab: radial knockout tree (nodes + branches) + tap-to-expand detail card ---- */
 .bracket-wheel-card { display: flex; justify-content: center; padding: 12px 6px; }
 .bracket-wheel { width: 100%; height: auto; touch-action: manipulation; }
 .bwedge { cursor: pointer; }
-.bwedge-band { fill: var(--card2); stroke: var(--bg); stroke-width: 1.5; transition: fill .15s; }
-.bwedge:active .bwedge-band { fill: var(--card); }
-.bwedge-band.bwedge-out { fill: rgba(152,161,189,.08); }
-.bwedge-live .bwedge-band { fill: rgba(240,96,111,.16); }
-.bwedge-selected .bwedge-band { fill: rgba(233,196,106,.22); }
+.bnode { fill: var(--card2); stroke: var(--line); stroke-width: 1.5; transition: fill .15s, stroke .15s; }
+.bwedge:active .bnode { fill: var(--card); }
+.bnode.bnode-out { fill: rgba(152,161,189,.1); opacity: .55; }
+.bwedge-live .bnode { fill: rgba(240,96,111,.28); stroke: var(--live); }
+.bwedge-selected .bnode { fill: rgba(233,196,106,.3); stroke: var(--accent); }
 .bwedge text { fill: var(--txt); pointer-events: none; font-weight: 600; font-family: inherit; }
 .bwedge text.bwedge-out-text { opacity: .4; text-decoration: line-through; }
 .bwedge text.bwedge-coach { fill: var(--muted2); font-weight: 600; }
@@ -305,7 +305,8 @@ button.danger { background: transparent; color: var(--danger); border: 1px solid
 .bcenter-label { fill: var(--muted); font-weight: 800; letter-spacing: 1px; }
 .bcenter-name { fill: var(--txt); font-weight: 700; }
 .bwedge-selected .bcenter-label, .bwedge-selected text.bcenter-label { fill: var(--accent); }
-.bwire { stroke: var(--line); stroke-width: 1.5; opacity: .7; }
+.belbow { stroke: var(--line); stroke-width: 1.5; fill: none; opacity: .8; }
+.bwedge-selected .belbow, .bwedge-live .belbow { opacity: 1; }
 .bring-title { fill: var(--accent); font-weight: 800; letter-spacing: .5px; opacity: .9; pointer-events: none; }
 
 .bracket-detail { border: 1px solid rgba(233,196,106,.35); }
