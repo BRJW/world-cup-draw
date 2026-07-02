@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=37';
-import { flagSVG } from '/flags.js?v=37';
+import { playAnnouncement } from '/announce.js?v=38';
+import { flagSVG } from '/flags.js?v=38';
 
 const $app = document.getElementById('app');
 
@@ -747,6 +747,27 @@ const BRACKET_ORDER = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-fina
 // exactly under the inner wedge they feed (equal angular division per ring).
 const BRACKET_FLOW = ['Round of 32', 'Round of 16', 'Quarter-final', 'Semi-final', 'Final'];
 
+// The 2026 World Cup Round-of-16 bracket is a fixed template, but ESPN's live
+// feed mis-pairs two of the still-undecided R16 slots — it sends Argentina's
+// path into Switzerland/Algeria, when the real bracket is Argentina/Cape Verde
+// vs Australia/Egypt and Switzerland/Algeria vs Colombia/Ghana (confirmed by
+// Wikipedia, Sky Sports, CBS, Olympics.com, and ESPN's OWN editorial, which
+// contradicts ESPN's structured feed). There's no reliable official-match-
+// number field to derive the pairing from, so we pin it here: each entry is
+// the two Round-of-32 fixtures (by sorted team codes) that feed one R16 slot,
+// in official R16 order. Used to override the feed's pairing; anything not
+// listed falls back to the feed's own placeholder data.
+const WC2026_R16 = [
+  [['RSA', 'CAN'], ['NED', 'MAR']],
+  [['GER', 'PAR'], ['FRA', 'SWE']],
+  [['BRA', 'JPN'], ['CIV', 'NOR']],
+  [['MEX', 'ECU'], ['ENG', 'COD']],
+  [['POR', 'CRO'], ['ESP', 'AUT']],
+  [['USA', 'BIH'], ['BEL', 'SEN']],
+  [['SUI', 'ALG'], ['COL', 'GHA']],
+  [['AUS', 'EGY'], ['ARG', 'CPV']],
+].map(([a, b]) => [a.slice().sort().join(','), b.slice().sort().join(',')]);
+
 let bracketSelectedId = null;   // id of the match shown in the detail panel (cleared on tab-entry)
 let bracketCoachFilter = null;  // playerId to spotlight (cleared on tab-entry)
 let bracketHighlightCodes = null; // Set of team codes kept at full strength while filtering
@@ -803,14 +824,37 @@ function reconcileBracketOrder(byStage) {
     return idx >= 0 ? idx + 1 : null;
   };
 
+  // Round-of-32 fixture (sorted team-code key) -> its official number, for the
+  // R16 template lookup below.
+  const r32Key = (m) => [m.teamA, m.teamB].filter(Boolean).sort().join(',');
+  const r32Num = new Map();
+  official['Round of 32'].forEach((m, i) => r32Num.set(r32Key(m), i + 1));
+
   // Edge table: for each round, official match number -> [feederNumA, feederNumB].
   const edges = {};
   for (const s of BRACKET_FLOW) {
     if (s === 'Round of 32') continue;
-    edges[s] = official[s].map((m) => [
-      feederNumForSide(m.teamA, m.teamAName, BRACKET_PREV[s]),
-      feederNumForSide(m.teamB, m.teamBName, BRACKET_PREV[s]),
-    ]);
+    edges[s] = official[s].map((m, i) => {
+      // R16 is pinned to the verified 2026 template (the feed mis-pairs two
+      // slots — see WC2026_R16). Only override when both feeders resolve to
+      // real R32 fixtures; otherwise fall through to the feed's own data.
+      if (s === 'Round of 16' && WC2026_R16[i]) {
+        let [kx, ky] = WC2026_R16[i];
+        let nx = r32Num.get(kx), ny = r32Num.get(ky);
+        if (nx && ny) {
+          // Keep teamA's feeder first (side-alignment) for a resolved match.
+          if (m.teamA && teamByCode(m.teamA)) {
+            const src = official['Round of 32'].find((o) => o.teamA === m.teamA || o.teamB === m.teamA);
+            if (src && r32Key(src) === ky) [nx, ny] = [ny, nx];
+          }
+          return [nx, ny];
+        }
+      }
+      return [
+        feederNumForSide(m.teamA, m.teamAName, BRACKET_PREV[s]),
+        feederNumForSide(m.teamB, m.teamBName, BRACKET_PREV[s]),
+      ];
+    });
   }
 
   const ordered = {}; for (const s of BRACKET_FLOW) ordered[s] = [];
