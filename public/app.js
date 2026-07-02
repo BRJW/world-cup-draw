@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=32';
-import { flagSVG } from '/flags.js?v=32';
+import { playAnnouncement } from '/announce.js?v=33';
+import { flagSVG } from '/flags.js?v=33';
 
 const $app = document.getElementById('app');
 
@@ -868,7 +868,7 @@ function renderBracketTab() {
     else bracketCoachFilter = null; // player gone / leaderboard not loaded — fail open
   }
 
-  const svg = renderBracketWheel(ringStages, byStage, finalMatch);
+  const svg = renderBracketWheel(ringStages, byStage, finalMatch, third);
   // No default selection — showing an arbitrary match's detail card before
   // the user has tapped anything just reads as random. Live matches are
   // already highlighted directly on the wheel (see .bwedge-live).
@@ -886,8 +886,7 @@ function renderBracketTab() {
   </div>
   <div class="card bracket-wheel-card">${svg}</div>
   ${filterRow}
-  ${selected ? renderBracketDetail(selected) : ''}
-  ${third ? renderThirdPlaceNote(third) : ''}`;
+  ${selected ? renderBracketDetail(selected) : ''}`;
 }
 
 // Tangential rotation for a label sitting at angle `aRad` (radians, 0 = 12
@@ -990,16 +989,25 @@ function elbowConnector(cx, cy, rChild, aA, aB, rParent, winnerSide) {
 // bracketFlagDefs during a render pass and emitted once into the wheel's
 // <defs>.
 let bracketFlagDefs = null;
-function flagBadge(code, team, cx, cy, r) {
+function flagBadge(code, team, cx, cy, r, dim = false) {
   if (bracketFlagDefs && !bracketFlagDefs.has(code)) {
     const raw = flagSVG(code, team || teamByCode(code));
     const inner = raw.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
     bracketFlagDefs.set(code, `<pattern id="bflag-${esc(code)}" width="1" height="1" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">${inner}</pattern>`);
   }
-  return `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="url(#bflag-${esc(code)})"></circle>`;
+  // `dim` = this nation is out of the tournament here: desaturate the flag
+  // (SVG filter — CSS filters on SVG elements are patchier across engines)
+  // and cross it out with a 45° X kept inside the circle (0.7071 ≈ cos 45°).
+  let html = `<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="${r.toFixed(2)}" fill="url(#bflag-${esc(code)})"${dim ? ' filter="url(#bdesat)" opacity="0.7"' : ''}></circle>`;
+  if (dim) {
+    const d = r * 0.7071;
+    html += `<line class="bcross" x1="${(cx - d).toFixed(2)}" y1="${(cy - d).toFixed(2)}" x2="${(cx + d).toFixed(2)}" y2="${(cy + d).toFixed(2)}"></line>`
+      + `<line class="bcross" x1="${(cx - d).toFixed(2)}" y1="${(cy + d).toFixed(2)}" x2="${(cx + d).toFixed(2)}" y2="${(cy - d).toFixed(2)}"></line>`;
+  }
+  return html;
 }
 
-function renderBracketWheel(ringStages, byStage, finalMatch) {
+function renderBracketWheel(ringStages, byStage, finalMatch, thirdMatch) {
   const SIZE = 640, CX = SIZE / 2, CY = SIZE / 2;
   const OUTER_R = SIZE / 2 - 20, CENTER_R = 42;
   const ringCount = Math.max(ringStages.length, 1);
@@ -1029,17 +1037,20 @@ function renderBracketWheel(ringStages, byStage, finalMatch) {
   const centerContent = finalMatch ? bracketCenter(finalMatch, CX, CY, CENTER_R) : `
     <circle cx="${CX}" cy="${CY}" r="${CENTER_R}" fill="var(--card2)" stroke="var(--line)" />
     <text x="${CX}" y="${CY + 4}" text-anchor="middle" font-size="22">🏆</text>`;
+  // sits in the open cavity below the bullseye — see bracketThird
+  const thirdContent = thirdMatch ? bracketThird(thirdMatch, CX, CY, CENTER_R) : '';
 
   // defs materialized last — flagBadge() registers a pattern per team code
-  // while nodes/centerContent render above (defs placement in the output
-  // doesn't matter to SVG).
-  const defs = `<defs>${[...bracketFlagDefs.values()].join('')}</defs>`;
+  // while everything above renders (defs placement in the output doesn't
+  // matter to SVG). bdesat is the eliminated-flag desaturation.
+  const defs = `<defs><filter id="bdesat"><feColorMatrix type="saturate" values="0.15"></feColorMatrix></filter>${[...bracketFlagDefs.values()].join('')}</defs>`;
   bracketFlagDefs = null;
 
   return `<svg viewBox="0 0 ${SIZE} ${SIZE}" class="bracket-wheel" xmlns="http://www.w3.org/2000/svg">
     ${defs}
     ${nodes}
     ${centerContent}
+    ${thirdContent}
     ${titles}
   </svg>`;
 }
@@ -1087,7 +1098,7 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
       // from the node centre: text-anchor is middle, so a centred pivot
       // must back off by half the actual rendered width or long names
       // would extend back over the flag.
-      html += flagBadge(code, teamByCode(code), dx, dy, dotR - 1.5);
+      html += flagBadge(code, teamByCode(code), dx, dy, dotR - 1.5, out);
       const deg = radialDeg(angle);
       const gap = dotR + 5;
       const availLen = Math.max(20, annulus - gap - 10);
@@ -1102,34 +1113,55 @@ function bracketNode(m, cx, cy, rRing, rNext, aA, aB) {
     return html;
   };
 
-  // The score sits in a small pill exactly at the juncture where the two
-  // teams' branches meet (order matches the nodes: left number = first
-  // team clockwise). Shown for live and finished matches alike — the wheel
-  // re-renders on every live sync, so an in-play score ticks up in place.
-  let scorePill = '';
-  if (m.scoreA != null && m.scoreB != null) {
-    const [jx, jy] = polar(cx, cy, rRing, (aA + aB) / 2);
-    const txt = `${m.scoreA}–${m.scoreB}`;
-    const fs = 8.5;
-    const w = txt.length * fs * 0.62 + 8, h = 13;
-    scorePill = `<g class="bscore">
-      <rect x="${(jx - w / 2).toFixed(2)}" y="${(jy - h / 2).toFixed(2)}" width="${w.toFixed(2)}" height="${h}" rx="${h / 2}"></rect>
-      <text x="${jx.toFixed(2)}" y="${(jy + 0.5).toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fs}">${esc(txt)}</text>
-    </g>`;
-  }
+  const [jx, jy] = polar(cx, cy, rRing, (aA + aB) / 2);
+  const scorePill = junctionPill(jx, jy, m, a.real && b.real);
 
-  // Coach spotlight: dim any match that doesn't involve one of the
-  // filtered coach's still-remaining teams (the opponent in a relevant
-  // match stays visible — you want to see who they're up against).
-  const hl = bracketHighlightCodes;
-  const dimmed = hl && !((a.real && hl.has(m.teamA)) || (b.real && hl.has(m.teamB)));
-
-  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${dimmed ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${bracketDimmed(m, a, b) ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
     ${elbowConnector(cx, cy, rRing, aA, aB, rNext, winnerSide)}
     ${team(aA, a, m.teamA, outA, ownA, winnerSide === 'A')}
     ${team(aB, b, m.teamB, outB, ownB, winnerSide === 'B')}
     ${scorePill}
   </g>`;
+}
+
+// A small pill at a match's juncture (where the two teams' branches meet).
+// Played/in-play matches show the score (order matches the nodes: left
+// number = first team clockwise), with the penalty result on a second line
+// when the tie went to a shootout. A match whose teams are both set but
+// hasn't kicked off yet shows its kickoff date + time (viewer's local
+// timezone) instead. The wheel re-renders on every live sync, so an
+// in-play score ticks up in place.
+function junctionPill(jx, jy, m, bothReal) {
+  const pill = (lines, extraCls = '') => {
+    const w = Math.max(...lines.map(([t, fs]) => t.length * fs * 0.62)) + 8;
+    const h = lines.length > 1 ? 21 : 13;
+    const ys = lines.length > 1 ? [jy - 4.5, jy + 5.5] : [jy + 0.5];
+    return `<g class="bscore${extraCls}">
+      <rect x="${(jx - w / 2).toFixed(2)}" y="${(jy - h / 2).toFixed(2)}" width="${w.toFixed(2)}" height="${h}" rx="6.5"></rect>
+      ${lines.map(([t, fs, cls], i) => `<text class="${cls || ''}" x="${jx.toFixed(2)}" y="${ys[i].toFixed(2)}" text-anchor="middle" dominant-baseline="central" font-size="${fs}">${esc(t)}</text>`).join('')}
+    </g>`;
+  };
+  if (m.scoreA != null && m.scoreB != null) {
+    const lines = [[`${m.scoreA}–${m.scoreB}`, 8.5, '']];
+    if (m.shootout && m.penA != null && m.penB != null) lines.push([`p ${m.penA}–${m.penB}`, 6.5, 'bscore-sub']);
+    return pill(lines);
+  }
+  if (bothReal && m.status === 'pre' && m.kickoff) {
+    const d = new Date(m.kickoff);
+    return pill([
+      [d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), 7, ''],
+      [d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }), 6.5, 'bscore-sub'],
+    ], ' bscore-kick');
+  }
+  return '';
+}
+
+// Coach spotlight: dim any match that doesn't involve one of the filtered
+// coach's still-remaining teams (the opponent in a relevant match stays
+// visible — you want to see who they're up against).
+function bracketDimmed(m, a, b) {
+  const hl = bracketHighlightCodes;
+  return !!(hl && !((a.real && hl.has(m.teamA)) || (b.real && hl.has(m.teamB))));
 }
 
 function bracketCenter(m, cx, cy, r) {
@@ -1196,20 +1228,40 @@ function renderBracketDetail(m) {
   </div>`;
 }
 
-function renderThirdPlaceNote(m) {
+// The third-place match lives inside the wheel, in the open cavity just
+// below the FINAL bullseye — it isn't part of the winners' line (nothing
+// feeds into or out of it), so it gets no connectors, just its two nodes,
+// a title, and the same score/kickoff pill every other match has. Drawn
+// horizontally: at the bottom-centre of the wheel that's the natural
+// reading orientation.
+function bracketThird(m, cx, cy, centerR) {
   const a = dispTeam(m.teamA, m.teamAName), b = dispTeam(m.teamB, m.teamBName);
-  const nameA = a.real ? a.name : shortenPlaceholder(a.name);
-  const nameB = b.real ? b.name : shortenPlaceholder(b.name);
-  const hasScore = m.scoreA != null && m.scoreB != null;
+  const { outA, outB, final, live } = bracketOutcome(m);
+  const decided = final && (outA || outB);
+  const winnerSide = decided ? (outA ? 'B' : 'A') : null;
   const selected = m.id === bracketSelectedId;
-  return `<div class="card third-note ${selected ? 'third-note-selected' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
-    <div class="third-note-label">🥉 Third place</div>
-    <div class="third-note-row">
-      <span>${a.flag} ${esc(nameA)}${hasScore ? ` <b>${esc(m.scoreA)}</b>` : ''}</span>
-      <span class="muted small">vs</span>
-      <span>${hasScore ? `<b>${esc(m.scoreB)}</b> ` : ''}${esc(nameB)} ${b.flag}</span>
-    </div>
-  </div>`;
+  const y = cy + centerR + 32;
+  const nodeR = 10;
+
+  const node = (x, t, code, out, isWinner) => {
+    const resultCls = decided ? (isWinner ? ' bnode-win' : ' bnode-loss') : '';
+    let html = `<circle class="bnode${resultCls}${!t.real ? ' bnode-tbd' : ''}" cx="${x.toFixed(2)}" cy="${y}" r="${nodeR}"></circle>`;
+    if (t.real) {
+      html += flagBadge(code, teamByCode(code), x, y, nodeR - 1.5, out);
+      const own = ownerInfo(code);
+      const lines = [[t.name, 6.5, out ? 'bwedge-out-text' : '']];
+      if (own) lines.push([own.name, 6, `bwedge-coach${own.isMe ? ' me' : ''}`]);
+      html += radialLabelStack(lines, x, y + nodeR + 8, 0, 54);
+    }
+    return html;
+  };
+
+  return `<g class="bwedge${selected ? ' bwedge-selected' : ''}${live ? ' bwedge-live' : ''}${bracketDimmed(m, a, b) ? ' bwedge-dim' : ''}" data-action="select-bracket-match" data-id="${esc(m.id)}">
+    <text class="bring-title" x="${cx}" y="${y - nodeR - 12}" text-anchor="middle" dominant-baseline="central" font-size="8">🥉 3RD PLACE</text>
+    ${node(cx - 32, a, m.teamA, outA, winnerSide === 'A')}
+    ${node(cx + 32, b, m.teamB, outB, winnerSide === 'B')}
+    ${junctionPill(cx, y, m, a.real && b.real)}
+  </g>`;
 }
 
 // ---- Scores tab ----
