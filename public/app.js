@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=39';
-import { flagSVG } from '/flags.js?v=39';
+import { playAnnouncement } from '/announce.js?v=40';
+import { flagSVG } from '/flags.js?v=40';
 
 const $app = document.getElementById('app');
 
@@ -768,6 +768,15 @@ const WC2026_R16 = [
   [['AUS', 'EGY'], ['ARG', 'CPV']],
 ].map(([a, b]) => [a.slice().sort().join(','), b.slice().sort().join(',')]);
 
+// Later rounds route by official match number within the previous round:
+// QF1 = R16 winners 1v2, QF2 = 5v6, QF3 = 3v4, QF4 = 7v8 (the halves
+// interleave), SF1 = QF 1v2, SF2 = QF 3v4. Same sources as WC2026_R16.
+const WC2026_LATER = {
+  'Quarter-final': [[1, 2], [5, 6], [3, 4], [7, 8]],
+  'Semi-final': [[1, 2], [3, 4]],
+  'Final': [[1, 2]],
+};
+
 let bracketSelectedId = null;   // id of the match shown in the detail panel (cleared on tab-entry)
 let bracketCoachFilter = null;  // playerId to spotlight (cleared on tab-entry)
 let bracketHighlightCodes = null; // Set of team codes kept at full strength while filtering
@@ -831,32 +840,47 @@ function reconcileBracketOrder(byStage) {
   official['Round of 32'].forEach((m, i) => r32Num.set(r32Key(m), i + 1));
 
   // Edge table: for each round, official match number -> [feederNumA, feederNumB].
+  // Every round is pinned to the verified 2026 template (WC2026_R16 /
+  // WC2026_LATER) — the feed's own routing mis-pairs slots and resolves
+  // winners into the wrong fixtures, so it's only used as a fallback when a
+  // round hasn't fully synced. The template gives each slot's feeders in
+  // canonical order; a resolved team on either side can prove the match's
+  // sides are stored swapped (the feed may resolve teamB while teamA is
+  // still a placeholder), in which case the edge order flips to keep each
+  // side over its own feeder.
+  const srcNumOf = (code, prevStage) => {
+    if (!code || !teamByCode(code)) return null;
+    const idx = official[prevStage].findIndex((o) => o.teamA === code || o.teamB === code);
+    return idx >= 0 ? idx + 1 : null;
+  };
   const edges = {};
   for (const s of BRACKET_FLOW) {
     if (s === 'Round of 32') continue;
+    const prev = BRACKET_PREV[s];
     edges[s] = official[s].map((m, i) => {
-      // R16 is pinned to the verified 2026 template (the feed mis-pairs two
-      // slots — see WC2026_R16). Only override when both feeders resolve to
-      // real R32 fixtures; otherwise fall through to the feed's own data.
-      if (s === 'Round of 16' && WC2026_R16[i]) {
+      if (s === 'Round of 16' && WC2026_R16[i] && official[prev].length === 16) {
         let [kx, ky] = WC2026_R16[i];
         let nx = r32Num.get(kx), ny = r32Num.get(ky);
         if (nx && ny) {
-          // Keep each side's feeder aligned with the side it actually sits on.
-          // Either resolved side can prove a swap is needed (the feed may
-          // resolve teamB while teamA is still a placeholder).
           const srcKeyOf = (code) => {
             if (!code || !teamByCode(code)) return null;
-            const src = official['Round of 32'].find((o) => o.teamA === code || o.teamB === code);
+            const src = official[prev].find((o) => o.teamA === code || o.teamB === code);
             return src ? r32Key(src) : null;
           };
           if (srcKeyOf(m.teamA) === ky || srcKeyOf(m.teamB) === kx) [nx, ny] = [ny, nx];
           return [nx, ny];
         }
       }
+      const tpl = WC2026_LATER[s];
+      if (tpl?.[i] && official[prev].length === tpl.length * 2) {
+        let [nx, ny] = tpl[i];
+        const a = srcNumOf(m.teamA, prev), b = srcNumOf(m.teamB, prev);
+        if (a === ny || b === nx) [nx, ny] = [ny, nx];
+        return [nx, ny];
+      }
       return [
-        feederNumForSide(m.teamA, m.teamAName, BRACKET_PREV[s]),
-        feederNumForSide(m.teamB, m.teamBName, BRACKET_PREV[s]),
+        feederNumForSide(m.teamA, m.teamAName, prev),
+        feederNumForSide(m.teamB, m.teamBName, prev),
       ];
     });
   }

@@ -11,7 +11,7 @@ import {
   currentTurn, advance, randomTeamForTurn, leaderboard, teamsForPlayer,
 } from './lib/draw.js';
 import { teamByCode } from './data/teams.js';
-import { fetchAllMatches, fetchMatchesAround, fixRound16Pairings } from './lib/espn.js';
+import { fetchAllMatches, fetchMatchesAround, fixKnockoutPairings } from './lib/espn.js';
 import { sendSMS, sendMany, smsEnabled, normalizePhone } from './lib/sms.js';
 import { sendEmail, sendMany as sendEmails, emailEnabled, normalizeEmail, magicLinkEmail } from './lib/email.js';
 import { id as randId } from './lib/ids.js';
@@ -648,12 +648,13 @@ async function syncSchedule({ seedIfEmpty = false } = {}) {
 
 // Upsert a batch, stamp lastSync, and notify clients.
 async function applyMatches(matches) {
-  // ESPN's feed mis-pairs two Round-of-16 slots; pin the official pairings
-  // before persisting so every view (scores, bracket, next match) agrees.
+  // ESPN's feed mis-routes knockout winners into the wrong upcoming fixtures;
+  // pin every not-yet-started knockout pairing to the official bracket before
+  // persisting so every view (scores, bracket, next match) agrees.
   try {
-    fixRound16Pairings(matches, await store.listMatches());
+    fixKnockoutPairings(matches, await store.listMatches());
   } catch (e) {
-    console.error('[sync] R16 pairing fix failed:', e.message);
+    console.error('[sync] knockout pairing fix failed:', e.message);
   }
   for (const m of matches) {
     try { await store.upsertMatchByExtId(m); }
