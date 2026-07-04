@@ -1,8 +1,8 @@
 // World Cup Draw 2026 — vanilla JS SPA. No build step.
 /* global io */
 
-import { playAnnouncement } from '/announce.js?v=38';
-import { flagSVG } from '/flags.js?v=38';
+import { playAnnouncement } from '/announce.js?v=39';
+import { flagSVG } from '/flags.js?v=39';
 
 const $app = document.getElementById('app');
 
@@ -842,11 +842,15 @@ function reconcileBracketOrder(byStage) {
         let [kx, ky] = WC2026_R16[i];
         let nx = r32Num.get(kx), ny = r32Num.get(ky);
         if (nx && ny) {
-          // Keep teamA's feeder first (side-alignment) for a resolved match.
-          if (m.teamA && teamByCode(m.teamA)) {
-            const src = official['Round of 32'].find((o) => o.teamA === m.teamA || o.teamB === m.teamA);
-            if (src && r32Key(src) === ky) [nx, ny] = [ny, nx];
-          }
+          // Keep each side's feeder aligned with the side it actually sits on.
+          // Either resolved side can prove a swap is needed (the feed may
+          // resolve teamB while teamA is still a placeholder).
+          const srcKeyOf = (code) => {
+            if (!code || !teamByCode(code)) return null;
+            const src = official['Round of 32'].find((o) => o.teamA === code || o.teamB === code);
+            return src ? r32Key(src) : null;
+          };
+          if (srcKeyOf(m.teamA) === ky || srcKeyOf(m.teamB) === kx) [nx, ny] = [ny, nx];
           return [nx, ny];
         }
       }
